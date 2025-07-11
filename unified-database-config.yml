@@ -1,0 +1,48 @@
+# SenseMy IoT Platform: Unified Database Configuration
+# Version: 1.0.0
+# Last Updated: 2025-06-29
+# Description: Centralized database connection details for all IoT services
+
+# Ingest Service Database
+ingest_database:
+  host: ingest-database
+  port: 5432
+  database: ingest_db
+  username: ingestuser
+  password: ingestpass
+
+# Device Manager Database
+device_database:
+  host: device-database
+  port: 5432
+  database: device_db
+  username: iot
+  password: secret
+
+# Analytics Database
+analytics_database:
+  host: analytics-database
+  port: 5432
+  database: analytics_db
+  username: analytics_user
+  password: analytics_secret
+
+# Common Network Configuration
+network:
+  name: sensemy.net
+  type: external
+
+# Service Port Mappings
+services:
+  ingest:
+    port: 8000
+  device_manager:
+    port: 9000
+  analytics:
+    port: 7000
+
+# Logging Configurations
+logging:
+  level: INFO
+  timezone: UTC
+  locale: en_US.UTF-8

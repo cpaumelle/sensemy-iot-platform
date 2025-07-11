@@ -1,0 +1,136 @@
+# ─────────────────────────────────────────────────────────────────────
+# 📦 Docker Compose Configuration for SenseMy IoT v4 Pipeline
+# 🗂️  File: docker-compose.v4.yml
+# 🕒  Last Updated: 2025-07-11 08:49 UTC
+# 👤  Maintainer: Charles Paumelle
+# 🔄  Version: v4.0.1
+#
+# 🧱 Structure:
+#   - 01-ingest-server
+#   - 02-device-manager
+#   - 03-analytics-alerts
+#   - Shared Postgres DBs (one per service)
+#   - Caddy reverse proxy
+#
+# 📄 Environment file: .env.v4
+# 🌐 Network: sensemy_network_v4 (external) and charliehub_net (external)
+# 📁 Volumes: per-service with persistent storage
+# 📝 Notes:
+#   - Do NOT hardcode ports. Always use ${...} from .env.v4.
+#   - Back up this file before editing:
+#       mv docker-compose.v4.yml docker-compose.v4.yml.bak.$(date +%Y%m%d%H%M)
+# ─────────────────────────────────────────────────────────────────────
+services:
+  ingest-service:
+    container_name: ingest-service-v4
+    build: ./01-ingest-server
+    env_file:
+      - .env.v4
+    ports:
+      - "${V4_INGEST_PORT}:8000"
+    volumes:
+      - ./01-ingest-server/app:/app
+      - ./01-ingest-server/initdb:/docker-entrypoint-initdb.d
+    networks:
+      - sensemy_network_v4
+
+  device-manager:
+    container_name: device-manager-v4
+    build: ./02-device-manager
+    env_file:
+      - .env.v4
+    ports:
+      - "${V4_DEVICE_MANAGER_PORT}:9000"
+    volumes:
+      - ./02-device-manager/app:/app
+      - ./02-device-manager/initdb:/docker-entrypoint-initdb.d
+    networks:
+      - sensemy_network_v4
+
+  analytics-alerts:
+    container_name: analytics-alerts-v4
+    build: ./03-analytics-alerts
+    env_file:
+      - .env.v4
+    ports:
+      - "${V4_ANALYTICS_PORT}:7000"
+    volumes:
+      - ./03-analytics-alerts/app:/app
+      - ./03-analytics-alerts/initdb:/docker-entrypoint-initdb.d
+    networks:
+      - sensemy_network_v4
+
+  ingest-database:
+    image: postgres:15
+    container_name: ingest-database-v4
+    env_file:
+      - .env.v4
+    volumes:
+      - ingest-db-data-v4:/var/lib/postgresql/data
+      - ./01-ingest-server/schema:/docker-entrypoint-initdb.d
+    ports:
+      - "${V4_INGEST_DB_PORT}:5433"
+    networks:
+      - sensemy_network_v4
+
+  device-database:
+    image: postgres:15
+    container_name: device-database-v4
+    env_file:
+      - .env.v4
+    volumes:
+      - device-db-data-v4:/var/lib/postgresql/data
+      - ./02-device-manager/schema:/docker-entrypoint-initdb.d
+    ports:
+      - "${V4_DEVICE_DB_PORT}:5434"
+    networks:
+      - sensemy_network_v4
+
+  analytics-database:
+    image: postgres:15
+    container_name: analytics-database-v4
+    env_file:
+      - .env.v4
+    volumes:
+      - analytics-db-data-v4:/var/lib/postgresql/data
+      - ./03-analytics-alerts/schema:/docker-entrypoint-initdb.d
+    ports:
+      - "${V4_ANALYTICS_DB_PORT}:5435"
+    networks:
+      - sensemy_network_v4
+
+  iot-reverse-proxy:
+    image: caddy:latest
+    container_name: iot-reverse-proxy-v4
+    ports:
+      - "${V4_CADDY_HTTP_PORT}:80"
+      - "${V4_CADDY_HTTPS_PORT}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    networks:
+      - sensemy_network_v4
+
+  adminer-ui-v4:
+    image: adminer
+    container_name: adminer-ui-v4
+    restart: always
+    ports:
+      - "${V4_ADMINER_PORT}:8080"
+    volumes:
+      - ./tools/adminer-custom:/var/www/html
+    networks:
+      - sensemy_network_v4
+      - charliehub_net
+
+# ─── Volumes ────────────────────────────────────────────────────────────────
+volumes:
+  ingest-db-data-v4:
+  device-db-data-v4:
+  analytics-db-data-v4:
+
+# ─── Networks ───────────────────────────────────────────────────────────────
+networks:
+  sensemy_network_v4:
+    external: true
+  charliehub_net:
+    external: true

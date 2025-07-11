@@ -1,0 +1,26 @@
+CREATE TABLE sites (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    icon TEXT
+);
+
+CREATE TABLE floors (
+    id SERIAL PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    icon TEXT
+);
+
+CREATE TABLE rooms (
+    id SERIAL PRIMARY KEY,
+    floor_id INTEGER NOT NULL REFERENCES floors(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    icon TEXT
+);
+
+CREATE TABLE zones (
+    id SERIAL PRIMARY KEY,
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    icon TEXT
+);

@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# Version: 1.0.6 — 2025-07-08
+# Fixed WARNING block assignment
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+BASE_REQ="$ROOT_DIR/requirements-base.txt"
+TEMP_REQ="$ROOT_DIR/.tmp_requirements.txt"
+
+# Auto-gen warning block
+WARNING="# ⚠️ AUTO-GENERATED REQUIREMENTS.TXT
+# This image depends on a generated requirements.txt.
+# Do NOT manually edit it — instead, regenerate using:
+#    ./tools/sync-requirements.sh
+# Then rebuild:
+#    docker compose build <service>"
+
+# Extra dependencies
+declare -A EXTRA_DEPS
+EXTRA_DEPS["analytics-processor-v2"]="databases[postgresql]==0.8.0\npython-multipart==0.0.6"
+EXTRA_DEPS["ingest-server"]="httpie"
+
+# Target services
+SERVICES=(
+  "device-manager"
+  "ingest-server"
+  "analytics-receiver-v1"
+)
+
+echo "🔄 Syncing requirements from $BASE_REQ"
+
+# Check base exists
+if [[ ! -f "$BASE_REQ" ]]; then
+  echo "❌ ERROR: Base requirements not found: $BASE_REQ"
+  exit 1
+fi
+
+# Prepend warning to base if needed
+if ! grep -q "AUTO-GENERATED REQUIREMENTS.TXT" "$BASE_REQ"; then
+  echo "📝 Prepending warning to base requirements"
+  {
+    echo "$WARNING"
+    echo
+    cat "$BASE_REQ"
+  } > "$TEMP_REQ"
+  mv "$TEMP_REQ" "$BASE_REQ"
+else
+  echo "✅ Warning already present in base requirements"
+fi
+
+echo "📦 Rebuilding requirements.txt for all services..."
+
+for SERVICE in "${SERVICES[@]}"; do
+  SERVICE_DIR="$ROOT_DIR/$SERVICE"
+  TARGET="$SERVICE_DIR/requirements.txt"
+
+  if [[ ! -d "$SERVICE_DIR" ]]; then
+    echo "⚠️  Skipping $SERVICE (directory not found)"
+    continue
+  fi
+
+  echo "🔧 Processing $SERVICE"
+
+  {
+    tail -n +1 "$BASE_REQ"
+  } > "$TEMP_REQ"
+
+  if [[ -n "${EXTRA_DEPS[$SERVICE]}" ]]; then
+    echo -e "\n# Extra dependencies for $SERVICE" >> "$TEMP_REQ"
+    echo -e "${EXTRA_DEPS[$SERVICE]}" >> "$TEMP_REQ"
+  fi
+
+  mv "$TEMP_REQ" "$TARGET"
+  echo "✅ $TARGET updated"
+done
+
+rm -f "$TEMP_REQ" 2>/dev/null || true
+echo "🎉 All done. Requirements successfully synced."

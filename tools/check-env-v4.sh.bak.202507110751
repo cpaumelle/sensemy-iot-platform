@@ -1,0 +1,71 @@
+#!/bin/bash
+# check-env-v4.sh - Validate .env.v4 for required vars and port conflicts
+# Version: v4.0.1
+# Updated: 2025-07-10 22:35 UTC
+
+ENV_FILE="${1:-../.env.v4}"  # default to parent folder
+REQUIRED_VARS=(
+  V4_INGEST_PORT V4_DEVICE_MANAGER_PORT V4_ANALYTICS_PORT
+  V4_CADDY_HTTP_PORT V4_CADDY_HTTPS_PORT V4_ADMINER_PORT
+  V4_INGEST_DB_PORT V4_DEVICE_DB_PORT V4_ANALYTICS_DB_PORT
+  V4_INGEST_DB_NAME V4_DEVICE_DB_NAME V4_ANALYTICS_DB_NAME
+  V4_INGEST_DB_USER V4_INGEST_DB_PASSWORD
+  V4_DEVICE_DB_USER V4_DEVICE_DB_PASSWORD
+  V4_ANALYTICS_DB_USER V4_ANALYTICS_DB_PASSWORD
+  V4_NETWORK_NAME V4_DOMAIN_ROOT V4_TLS_EMAIL
+  UID GID
+)
+
+# ─── Load the env file ─────────────────────────────────────────────
+if [[ ! -f $ENV_FILE ]]; then
+  echo "❌ Env file $ENV_FILE not found"
+  exit 1
+fi
+
+set -a
+source "$ENV_FILE"
+set +a
+
+echo "🔍 Validating required variables..."
+
+# ─── Check for unset or empty vars ─────────────────────────────────
+MISSING_VARS=()
+for var in "${REQUIRED_VARS[@]}"; do
+  if [[ -z "${!var}" ]]; then
+    MISSING_VARS+=("$var")
+  fi
+done
+
+if [[ ${#MISSING_VARS[@]} -gt 0 ]]; then
+  echo "❌ Missing required variables:"
+  for var in "${MISSING_VARS[@]}"; do
+    echo "   - $var"
+  done
+  exit 2
+else
+  echo "✅ All required environment variables are set"
+fi
+
+# ─── Check for port conflicts on host ──────────────────────────────
+echo "🔍 Checking for port conflicts..."
+CONFLICTS=()
+PORT_VARS=(V4_INGEST_PORT V4_DEVICE_MANAGER_PORT V4_ANALYTICS_PORT V4_CADDY_HTTP_PORT V4_CADDY_HTTPS_PORT V4_ADMINER_PORT V4_INGEST_DB_PORT V4_DEVICE_DB_PORT V4_ANALYTICS_DB_PORT)
+
+for var in "${PORT_VARS[@]}"; do
+  port="${!var}"
+  if lsof -iTCP:"$port" -sTCP:LISTEN -Pn > /dev/null 2>&1; then
+    CONFLICTS+=("$var ($port)")
+  fi
+done
+
+if [[ ${#CONFLICTS[@]} -gt 0 ]]; then
+  echo "❌ Port conflicts detected:"
+  for item in "${CONFLICTS[@]}"; do
+    echo "   - $item"
+  done
+  exit 3
+else
+  echo "✅ No host port conflicts detected"
+fi
+
+echo "✅ .env.v4 validation complete"
