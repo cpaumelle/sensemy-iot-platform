@@ -1,0 +1,30 @@
+# WMC Gateway QR Scanner - Docker Compose Integration
+# Version: 1.0.0
+# Created: 2025-08-20 16:45:00 UTC
+
+# Add this service to your main docker-compose.yml:
+
+  wmc-gateway-scanner:
+    container_name: wmc-gateway-scanner
+    restart: unless-stopped
+    build: ./05-wmc-gateway-scanner
+    env_file:
+      - .env
+    ports:
+      - "7300:7300"
+    volumes:
+      - ./05-wmc-gateway-scanner/app:/app/app
+      - ./05-wmc-gateway-scanner/static:/app/static
+      - ./05-wmc-gateway-scanner/templates:/app/templates
+    networks:
+      - sensemy_network
+      - charliehub_net
+    environment:
+      - WMC_BASE_URL=${WMC_BASE_URL}
+      - WMC_USERNAME=${WMC_USERNAME}
+      - WMC_PASSWORD=${WMC_PASSWORD}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7300/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

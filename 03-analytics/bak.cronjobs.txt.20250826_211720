@@ -1,0 +1,9 @@
+# Analytics Service Cron Jobs
+# Version: 1.0.1 - 2025-08-09 13:55:00 UTC
+# Fixed cron syntax errors
+
+# Heartbeat every hour (simple and reliable)
+0 * * * * echo "$(date): Analytics cron heartbeat" >> /var/log/cron_heartbeat.log 2>&1
+
+# Placeholder for materialized view refresh (every 15 minutes)
+*/15 * * * * echo "$(date): Materialized view refresh placeholder" >> /var/log/cron.log 2>&1

@@ -1,0 +1,61 @@
+{
+  "DevEUI_uplink": {
+    "Late": 0,
+    "Lrrs": {
+      "Lrr": [{
+        "Chain": 0,
+        "Lrrid": "1000BCC5",
+        "LrrESP": -74.135208,
+        "LrrSNR": 15.0,
+        "LrrRSSI": -74.0
+      }]
+    },
+    "Time": "2025-07-13T07:49:22.089+00:00",
+    "FPort": 1,
+    "Lrcid": "00000211",
+    "Lrrid": "1000BCC5",
+    "MType": 2,
+    "ADRbit": 1,
+    "DevEUI": "TEST123XACTILITY",
+    "FCntDn": 43,
+    "FCntUp": 2293,
+    "LrrESP": -74.135208,
+    "LrrSNR": 15.0,
+    "SpFact": 7,
+    "Channel": "LC1",
+    "DevAddr": "0017E5B8",
+    "LrrRSSI": -74.0,
+    "MeanPER": 0.0,
+    "NbTrans": 1,
+    "SubBand": "G1",
+    "TxPower": 2.0,
+    "mic_hex": "aa37e7d1",
+    "ModelCfg": "0",
+    "DevLrrCnt": 1,
+    "DriverCfg": {
+      "app": { "mId": "generic", "pId": "im-b", "ver": "1" },
+      "mod": { "mId": "people-counter", "pId": "im-b", "ver": "1" }
+    },
+    "Frequency": 868.3,
+    "CustomerID": "100053770",
+    "InstantPER": 0.0,
+    "payload_hex": "02060004a30b00fb671300012c000000008200000000f5",
+    "CustomerData": {
+      "alr": { "pro": "IMBU/PETER", "ver": "1" },
+      "loc": null,
+      "doms": [{
+        "g": "Clients",
+        "n": "CBRE/CBRE occupancy data/ES Sp - People Count/people"
+      }],
+      "name": "TEST123XACTILITY",
+      "tags": ["CBRE Eurotunnel"]
+    },
+    "DynamicClass": "A",
+    "LostUplinksAS": 0,
+    "BaseStationData": {
+      "doms": [],
+      "name": "0016C0-7276FF002E062E2D"
+    },
+    "PayloadEncryption": 0
+  }
+}

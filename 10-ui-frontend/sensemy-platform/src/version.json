@@ -1,0 +1,10 @@
+{
+  "version": "4.0.0",
+  "build": 18,
+  "buildTimestamp": "2025-08-11 16:24:33 UTC",
+  "buildDate": "20250811",
+  "buildTime": "162433",
+  "buildNumber": "20250811.18",
+  "gitCommit": "ac270a0",
+  "environment": "production"
+}

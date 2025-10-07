@@ -1,0 +1,5 @@
+# Analytics Service Cron Jobs
+# Version: 2.0.0 - 2025-08-26 22:20:00 UTC
+# Functional materialized view refresh implementation
+*/15 * * * * /usr/local/bin/python3 /app/refresh_views.py >> /var/log/cron.log 2>&1
+0 * * * * echo "$(date): Analytics cron heartbeat" >> /var/log/cron_heartbeat.log 2>&1

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WMC Gateway Scanner</title>
+    
+    <!-- PWA Configuration -->
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#667eea">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Gateway Scanner">
+    
+    <!-- Favicon and App Icons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16x16.png">
+    <link rel="apple-touch-icon" href="/static/img/icon-192.png">
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="/static/css/style.css" as="style">
+    <link rel="preload" href="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" as="script">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="/static/css/style.css">
+    
+    <!-- QR Code Scanner Library -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+    <!-- PWA Install Prompt -->
+    <div id="pwa-install-prompt" class="pwa-install-prompt" style="display:none;">
+        <div class="pwa-prompt-content">
+            <h3>📱 Install Gateway Scanner</h3>
+            <p>Add to your home screen for quick access</p>
+            <div class="pwa-prompt-actions">
+                <button id="pwa-install-btn" class="btn btn-primary">Install</button>
+                <button id="pwa-dismiss-btn" class="btn btn-secondary">Not now</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>🔍 WMC Gateway Scanner</h1>
+            <p>Scan gateway QR code for real-time status</p>
+            
+            <!-- Connection status indicator -->
+            <div class="connection-indicator" id="connection-indicator">
+                <span class="connection-dot online" id="connection-dot"></span>
+                <span class="connection-text" id="connection-text">Online</span>
+            </div>
+        </header>
+
+        <!-- Status Indicators -->
+        <div class="status-bar">
+            <div class="status-item" id="wmc-status">
+                <span class="status-icon">🔄</span>
+                <span class="status-text">Checking WMC...</span>
+            </div>
+            <div class="status-item" id="camera-status">
+                <span class="status-icon">📱</span>
+                <span class="status-text">Camera ready</span>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- QR Scanner Section -->
+            <section class="scanner-section">
+                <div class="scanner-container">
+                    <div id="qr-reader" class="qr-reader"></div>
+                    <div class="scanner-controls">
+                        <button id="start-scan-btn" class="btn btn-primary">
+                            📷 Start Scanning
+                        </button>
+                        <button id="stop-scan-btn" class="btn btn-secondary" style="display:none;">
+                            ⏹️ Stop Scanning
+                        </button>
+                        <button id="switch-camera-btn" class="btn btn-secondary" style="display:none;">
+                            🔄 Switch Camera
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Manual EUI Input -->
+                <div class="manual-input">
+                    <h3>Or enter Gateway EUI manually:</h3>
+                    <div class="input-group">
+                        <input type="text" id="manual-eui" placeholder="Enter Gateway EUI (e.g., 7276FF002E123456)" maxlength="16">
+                        <button id="lookup-btn" class="btn btn-primary">🔍 Lookup</button>
+                    </div>
+                    <div class="eui-validation" id="eui-validation" style="display:none;">
+                        <span class="validation-icon">✅</span>
+                        <span class="validation-text">Valid EUI format</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="results-section" style="display:none;">
+                <div class="results-header">
+                    <h2>Gateway Information</h2>
+                    <button id="new-scan-btn" class="btn btn-secondary">🔍 New Scan</button>
+                </div>
+                <div id="gateway-info" class="gateway-info">
+                    <!-- Gateway information will be populated here -->
+                </div>
+            </section>
+
+            <!-- Error Section -->
+            <div id="error-section" class="error-section" style="display:none;">
+                <h3>❌ Error</h3>
+                <p id="error-message"></p>
+                <div class="error-actions">
+                    <button id="clear-error-btn" class="btn btn-secondary">Clear</button>
+                    <button id="retry-btn" class="btn btn-primary">Retry</button>
+                </div>
+            </div>
+
+            <!-- Offline Indicator -->
+            <div id="offline-indicator" class="offline-indicator" style="display:none;">
+                <span class="offline-icon">📶</span>
+                <span class="offline-text">You're offline. Some features may not be available.</span>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>SenseMy IoT Platform - WMC Gateway Scanner v1.0.0</p>
+            <div class="footer-links">
+                <a href="/docs" target="_blank">📖 API Docs</a>
+                <a href="/health" target="_blank">🏥 Health</a>
+                <a href="/status" target="_blank">📊 Status</a>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/app.js"></script>
+    
+    <!-- PWA Service Worker Registration -->
+    <script>
+        // Register service worker for PWA functionality
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/js/sw.js')
+                    .then((registration) => {
+                        console.log('✅ Service Worker registered:', registration);
+                    })
+                    .catch((error) => {
+                        console.error('❌ Service Worker registration failed:', error);
+                    });
+            });
+        }
+        
+        // PWA Install Prompt
+        let deferredPrompt;
+        
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            
+            // Show install prompt
+            document.getElementById('pwa-install-prompt').style.display = 'block';
+        });
+        
+        document.getElementById('pwa-install-btn').addEventListener('click', () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then((choiceResult) => {
+                    if (choiceResult.outcome === 'accepted') {
+                        console.log('✅ PWA installed');
+                    }
+                    deferredPrompt = null;
+                    document.getElementById('pwa-install-prompt').style.display = 'none';
+                });
+            }
+        });
+        
+        document.getElementById('pwa-dismiss-btn').addEventListener('click', () => {
+            document.getElementById('pwa-install-prompt').style.display = 'none';
+        });
+        
+        // Online/Offline Status
+        window.addEventListener('online', () => {
+            document.getElementById('offline-indicator').style.display = 'none';
+            document.getElementById('connection-dot').className = 'connection-dot online';
+            document.getElementById('connection-text').textContent = 'Online';
+        });
+        
+        window.addEventListener('offline', () => {
+            document.getElementById('offline-indicator').style.display = 'block';
+            document.getElementById('connection-dot').className = 'connection-dot offline';
+            document.getElementById('connection-text').textContent = 'Offline';
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# WMC Gateway QR Scanner - Python Dependencies
+# Version: 1.0.0
+# Created: 2025-08-20 16:45:00 UTC
+
+fastapi==0.115.13
+uvicorn[standard]==0.24.0
+httpx==0.28.1
+jinja2==3.1.4
+python-multipart==0.0.9
+aiofiles==24.1.0

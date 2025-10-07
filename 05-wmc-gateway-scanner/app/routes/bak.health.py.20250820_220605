@@ -1,0 +1,13 @@
+"""
+Health Routes
+Version: 1.0.0
+Last Updated: 2025-08-20 18:30 UTC
+"""
+
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/healthz")
+async def healthz():
+    return {"status": "ok"}

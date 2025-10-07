@@ -1,0 +1,115 @@
+services:
+    ingest-service:
+        container_name: ingest-service
+        restart: unless-stopped
+        build: ./01-ingest-server
+        env_file:
+            - .env
+        ports:
+            - "${INGEST_PORT}:8000"
+        volumes:
+            - ./01-ingest-server/app:/app
+            - ./01-ingest-server/initdb:/docker-entrypoint-initdb.d
+            - ./01-ingest-server/tools:/app/tools
+        networks:
+            - sensemy_network
+            - charliehub_net
+
+    transform-service:
+        container_name: transform-service
+        restart: unless-stopped
+        build: ./02-transform
+        env_file:
+            - .env
+        ports:
+            - "${TRANSFORM_MANAGER_PORT}:9001"
+        volumes:
+            - ./02-transform/app:/app
+            - ./02-transform/initdb:/docker-entrypoint-initdb.d
+        networks:
+            - sensemy_network
+            - charliehub_net
+
+    analytics-service:
+        container_name: analytics-service
+        restart: unless-stopped
+        build: ./03-analytics
+        env_file:
+            - .env
+        ports:
+            - "7000:7000"
+        volumes:
+            - ./03-analytics/app:/app
+        networks:
+            - sensemy_network
+            - charliehub_net
+        environment:
+            - ANALYTICS_PORT=7000
+
+    adminer-ui:
+        build:
+            context: ./88-tools/adminer-custom
+            dockerfile: Dockerfile
+        container_name: adminer-ui
+        restart: always
+        ports:
+            - "${ADMINER_PORT}:8080"
+        environment:
+            - INGEST_DB_USER=${INGEST_DB_USER}
+            - INGEST_DB_NAME=${INGEST_DB_NAME}
+            - TRANSFORM_DB_USER=${TRANSFORM_DB_USER}
+            - TRANSFORM_DB_NAME=${TRANSFORM_DB_NAME}
+        networks:
+            - sensemy_network
+            - charliehub_net
+
+    ui-frontend:
+        build:
+            context: ./10-ui-frontend/sensemy-platform
+            args:
+                - UI_VERSION=4.0.0
+                - UI_ENVIRONMENT=${UI_ENVIRONMENT:-production}
+                - TRANSFORM_API_BASE=${TRANSFORM_API_DOMAIN}/v1
+        container_name: ui-frontend
+        restart: unless-stopped
+        ports:
+            - "${UI_FRONTEND_PORT:-8500}:80"
+        networks:
+            - sensemy_network
+            - charliehub_net
+        environment:
+            - UI_STATIC_PATH=${UI_STATIC_PATH:-/app/src}
+        healthcheck:
+            test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+            interval: 10s
+            timeout: 3s
+            retries: 5
+        read_only: true
+        tmpfs:
+            - /var/run
+            - /var/cache/nginx
+            - /var/tmp
+
+    tactacam-service:
+        container_name: tactacam-service
+        restart: unless-stopped
+        build: ./04-tactacam
+        env_file: [.env]
+        ports:
+            - "${TACTACAM_PORT}:7200"
+        volumes:
+            - ./04-tactacam/app:/app
+        networks:
+            - sensemy_network
+            - charliehub_net
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:7200/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+
+networks:
+    sensemy_network:
+        external: true
+    charliehub_net:
+        external: true

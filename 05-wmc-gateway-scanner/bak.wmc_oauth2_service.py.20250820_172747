@@ -1,0 +1,307 @@
+"""
+WMC OAuth2 Service Implementation
+Version: 2.0.0
+Created: 2025-08-20 16:20:00 UTC
+
+Complete OAuth2 implementation for WMC authentication using AWS Cognito
+Based on browser network analysis and OAuth2 discovery
+"""
+
+import httpx
+import asyncio
+import os
+import logging
+import urllib.parse
+import secrets
+import base64
+import hashlib
+import json
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class WMCOAuth2Config:
+    """WMC OAuth2 configuration"""
+    client_id: str = "2lk7uhemurg6jpt8qmvcf1e4dl"
+    auth_domain: str = "auth.wmc.wanesy.com"
+    redirect_uri: str = "https://wmc.wanesy.com/login/oauth2/code/cognito"
+    scope: str = "openid profile email"
+    response_type: str = "code"
+
+@dataclass
+class OAuth2Token:
+    """OAuth2 access token"""
+    access_token: str
+    token_type: str
+    expires_in: int
+    refresh_token: Optional[str] = None
+    scope: Optional[str] = None
+    id_token: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+    def __post_init__(self):
+        if self.expires_at is None and self.expires_in:
+            self.expires_at = datetime.utcnow() + timedelta(seconds=self.expires_in)
+
+    @property
+    def is_expired(self) -> bool:
+        return self.expires_at and datetime.utcnow() >= self.expires_at
+
+class WMCOAuth2Service:
+    """WMC OAuth2 authentication service"""
+
+    def __init__(self, base_url: str = "https://wmc.wanesy.com"):
+        self.config = WMCOAuth2Config()
+        self.base_url = base_url
+        self.client = httpx.AsyncClient(timeout=30)
+        self.token: Optional[OAuth2Token] = None
+
+    async def close(self):
+        """Close HTTP client"""
+        await self.client.aclose()
+
+    def generate_pkce_challenge(self) -> tuple[str, str]:
+        """Generate PKCE code verifier and challenge for OAuth2"""
+        # Generate code verifier (43-128 characters)
+        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+        
+        # Generate code challenge
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode('utf-8')).digest()
+        ).decode('utf-8').rstrip('=')
+        
+        return code_verifier, code_challenge
+
+    def get_authorization_url(self, state: Optional[str] = None) -> tuple[str, str, str]:
+        """
+        Generate OAuth2 authorization URL for user login
+        
+        Returns:
+            tuple: (authorization_url, state, code_verifier)
+        """
+        if state is None:
+            state = secrets.token_urlsafe(32)
+        
+        code_verifier, code_challenge = self.generate_pkce_challenge()
+        
+        params = {
+            "client_id": self.config.client_id,
+            "response_type": self.config.response_type,
+            "scope": self.config.scope,
+            "redirect_uri": self.config.redirect_uri,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256"
+        }
+        
+        auth_url = f"https://{self.config.auth_domain}/oauth2/authorize?" + urllib.parse.urlencode(params)
+        
+        logger.info(f"🔗 Generated OAuth2 authorization URL")
+        return auth_url, state, code_verifier
+
+    async def exchange_code_for_token(self, authorization_code: str, code_verifier: str) -> OAuth2Token:
+        """
+        Exchange authorization code for access token
+        
+        Args:
+            authorization_code: Code from OAuth2 callback
+            code_verifier: PKCE code verifier
+            
+        Returns:
+            OAuth2Token: Access token and metadata
+        """
+        token_data = {
+            "grant_type": "authorization_code",
+            "client_id": self.config.client_id,
+            "redirect_uri": self.config.redirect_uri,
+            "code": authorization_code,
+            "code_verifier": code_verifier
+        }
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }
+        
+        logger.info("🔄 Exchanging authorization code for access token...")
+        
+        try:
+            response = await self.client.post(
+                f"https://{self.config.auth_domain}/oauth2/token",
+                data=token_data,
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                token_response = response.json()
+                
+                self.token = OAuth2Token(
+                    access_token=token_response["access_token"],
+                    token_type=token_response.get("token_type", "Bearer"),
+                    expires_in=token_response.get("expires_in", 3600),
+                    refresh_token=token_response.get("refresh_token"),
+                    scope=token_response.get("scope"),
+                    id_token=token_response.get("id_token")
+                )
+                
+                logger.info("✅ Successfully obtained access token")
+                return self.token
+            else:
+                error_detail = response.text
+                logger.error(f"❌ Token exchange failed: {response.status_code} - {error_detail}")
+                raise Exception(f"Token exchange failed: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ Token exchange error: {e}")
+            raise
+
+    async def refresh_access_token(self) -> OAuth2Token:
+        """Refresh access token using refresh token"""
+        if not self.token or not self.token.refresh_token:
+            raise Exception("No refresh token available")
+        
+        token_data = {
+            "grant_type": "refresh_token",
+            "client_id": self.config.client_id,
+            "refresh_token": self.token.refresh_token
+        }
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }
+        
+        try:
+            response = await self.client.post(
+                f"https://{self.config.auth_domain}/oauth2/token",
+                data=token_data,
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                token_response = response.json()
+                
+                # Update existing token
+                self.token.access_token = token_response["access_token"]
+                self.token.expires_in = token_response.get("expires_in", 3600)
+                self.token.expires_at = datetime.utcnow() + timedelta(seconds=self.token.expires_in)
+                
+                if "refresh_token" in token_response:
+                    self.token.refresh_token = token_response["refresh_token"]
+                
+                logger.info("✅ Access token refreshed successfully")
+                return self.token
+            else:
+                logger.error(f"❌ Token refresh failed: {response.status_code}")
+                raise Exception(f"Token refresh failed: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ Token refresh error: {e}")
+            raise
+
+    async def ensure_valid_token(self) -> bool:
+        """Ensure we have a valid access token"""
+        if not self.token:
+            return False
+        
+        if self.token.is_expired:
+            if self.token.refresh_token:
+                try:
+                    await self.refresh_access_token()
+                    return True
+                except:
+                    return False
+            else:
+                return False
+        
+        return True
+
+    async def get_headers(self) -> Dict[str, str]:
+        """Get headers with OAuth2 access token"""
+        if not await self.ensure_valid_token():
+            raise Exception("No valid access token available")
+
+        return {
+            "Authorization": f"{self.token.token_type} {self.token.access_token}",
+            "Accept": "application/vnd.kerlink.iot-v1+json",
+            "Content-Type": "application/vnd.kerlink.iot-v1+json"
+        }
+
+    async def get_gateway_by_eui(self, gateway_eui: str) -> Optional[Dict[str, Any]]:
+        """Get gateway information by EUI using OAuth2 token"""
+        try:
+            headers = await self.get_headers()
+
+            logger.info(f"🔍 Looking up gateway: {gateway_eui}")
+
+            # Get list of gateways
+            response = await self.client.get(
+                f"{self.base_url}/gms/application/gateways",
+                headers=headers
+            )
+
+            if response.status_code == 200:
+                gateways = response.json()
+
+                # Find gateway by EUI
+                for gateway in gateways:
+                    if gateway.get("eui", "").upper() == gateway_eui.upper():
+                        # Get detailed gateway information
+                        gateway_id = gateway.get("id")
+                        if gateway_id:
+                            detail_response = await self.client.get(
+                                f"{self.base_url}/gms/application/gateways/{gateway_id}",
+                                headers=headers
+                            )
+
+                            if detail_response.status_code == 200:
+                                gateway_detail = detail_response.json()
+                                gateway_detail["lookup_timestamp"] = datetime.utcnow().isoformat()
+                                gateway_detail["source"] = "wmc_oauth2_api"
+
+                                logger.info(f"✅ Gateway found: {gateway.get('name', gateway_eui)}")
+                                return gateway_detail
+
+                logger.warning(f"⚠️ Gateway not found: {gateway_eui}")
+                return None
+
+            else:
+                logger.error(f"❌ Failed to fetch gateways: {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error looking up gateway {gateway_eui}: {e}")
+            return None
+
+    async def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """Get current user information"""
+        try:
+            headers = await self.get_headers()
+
+            response = await self.client.get(
+                f"{self.base_url}/gms/application/userInfo",
+                headers=headers
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"❌ Failed to get user info: {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error getting user info: {e}")
+            return None
+
+    def get_auth_status(self) -> Dict[str, Any]:
+        """Get current authentication status"""
+        return {
+            "authenticated": self.token is not None,
+            "token_valid": self.token and not self.token.is_expired if self.token else False,
+            "expires_at": self.token.expires_at.isoformat() if self.token and self.token.expires_at else None,
+            "has_refresh_token": self.token and self.token.refresh_token is not None if self.token else False,
+            "scope": self.token.scope if self.token else None
+        }

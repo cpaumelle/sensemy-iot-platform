@@ -1,0 +1,13 @@
+{
+  "dr": 5,
+  "snr": "15",
+  "rssi": "-55",
+  "fPort": "102",
+  "devEui": "TEST456XXNETMORE",
+  "payload": "00fb3c610d3e2100",
+  "timestamp": "2025-07-13T06:52:44.887Z",
+  "sensorType": "browan_tbms100",
+  "messageType": "payload",
+  "spreadingFactor": "7",
+  "gatewayIdentifier": "30833"
+}

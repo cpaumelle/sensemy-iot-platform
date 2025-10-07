@@ -1,0 +1,222 @@
+"""
+OAuth2 Web Flow Routes
+Version: 1.0.0
+Created: 2025-08-20 16:50:00 UTC
+
+Web-based OAuth2 authentication flow for WMC Gateway Scanner
+Handles login redirect, callback, and token management
+"""
+
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+import logging
+from typing import Dict, Any
+import json
+
+logger = logging.getLogger(__name__)
+
+oauth2_router = APIRouter()
+
+# This will be set from main.py
+wmc_service_instance = None
+templates = None
+
+def set_dependencies(service, template_instance):
+    """Set service and template dependencies"""
+    global wmc_service_instance, templates
+    wmc_service_instance = service
+    templates = template_instance
+
+@oauth2_router.get("/auth/login")
+async def oauth2_login():
+    """Initiate OAuth2 login flow"""
+    try:
+        if not wmc_service_instance:
+            raise HTTPException(status_code=503, detail="Service not available")
+
+        # Generate OAuth2 authorization URL
+        auth_url, state, code_verifier = wmc_service_instance.get_authorization_url()
+
+        logger.info(f"🔗 Generated OAuth2 login URL")
+
+        # Store code_verifier and state in a simple way (in production, use secure session)
+        # For now, return them to the client to handle
+        return {
+            "authorization_url": auth_url,
+            "state": state,
+            "code_verifier": code_verifier,
+            "message": "Redirect to authorization_url to complete login"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ OAuth2 login error: {e}")
+        raise HTTPException(status_code=500, detail=f"Login initiation failed: {str(e)}")
+
+@oauth2_router.get("/auth/callback")
+async def oauth2_callback(
+    request: Request,
+    code: str = None,
+    state: str = None,
+    error: str = None
+):
+    """Handle OAuth2 callback from WMC"""
+    if error:
+        logger.error(f"❌ OAuth2 callback error: {error}")
+        return HTMLResponse(content=f"""
+        <html><body>
+        <h1>❌ Authentication Error</h1>
+        <p>Error: {error}</p>
+        <a href="/">Return to Home</a>
+        </body></html>
+        """, status_code=400)
+
+    if not code:
+        logger.error("❌ No authorization code in callback")
+        return HTMLResponse(content="""
+        <html><body>
+        <h1>❌ Authentication Error</h1>
+        <p>No authorization code received</p>
+        <a href="/">Return to Home</a>
+        </body></html>
+        """, status_code=400)
+
+    try:
+        # Note: In a real implementation, we'd retrieve code_verifier from secure session
+        # For this demo, we'll need to handle this differently
+        
+        return HTMLResponse(content=f"""
+        <html><body>
+        <h1>🔄 Processing Authentication...</h1>
+        <p>Authorization code received: {code[:20]}...</p>
+        <p>State: {state}</p>
+        
+        <script>
+        // Pass the code back to the main application
+        if (window.opener) {{
+            window.opener.postMessage({{
+                type: 'oauth2_callback',
+                code: '{code}',
+                state: '{state}'
+            }}, '*');
+            window.close();
+        }} else {{
+            // Fallback: redirect to main app with code
+            window.location.href = '/?code={code}&state={state}';
+        }}
+        </script>
+        
+        <p>If the window doesn't close automatically, <a href="/?code={code}&state={state}">click here</a></p>
+        </body></html>
+        """)
+
+    except Exception as e:
+        logger.error(f"❌ OAuth2 callback processing error: {e}")
+        return HTMLResponse(content=f"""
+        <html><body>
+        <h1>❌ Authentication Processing Error</h1>
+        <p>Error: {str(e)}</p>
+        <a href="/">Return to Home</a>
+        </body></html>
+        """, status_code=500)
+
+@oauth2_router.post("/auth/exchange-token")
+async def exchange_token(request: Request):
+    """Exchange authorization code for access token"""
+    try:
+        body = await request.json()
+        authorization_code = body.get("code")
+        code_verifier = body.get("code_verifier")
+
+        if not authorization_code or not code_verifier:
+            raise HTTPException(status_code=400, detail="Missing code or code_verifier")
+
+        if not wmc_service_instance:
+            raise HTTPException(status_code=503, detail="Service not available")
+
+        # Exchange code for token
+        token = await wmc_service_instance.exchange_code_for_token(
+            authorization_code, 
+            code_verifier
+        )
+
+        logger.info("✅ OAuth2 token exchange successful")
+
+        return {
+            "success": True,
+            "token_type": token.token_type,
+            "expires_in": token.expires_in,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            "has_refresh_token": token.refresh_token is not None,
+            "scope": token.scope,
+            "message": "Authentication successful"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Token exchange error: {e}")
+        raise HTTPException(status_code=500, detail=f"Token exchange failed: {str(e)}")
+
+@oauth2_router.get("/auth/status-detailed")
+async def get_detailed_auth_status():
+    """Get detailed authentication status"""
+    try:
+        if not wmc_service_instance:
+            raise HTTPException(status_code=503, detail="Service not available")
+
+        oauth2_status = wmc_service_instance.get_oauth2_status()
+        connection_status = await wmc_service_instance.get_connection_status()
+        
+        return {
+            "oauth2": oauth2_status,
+            "connection": connection_status,
+            "service_available": True
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Status check error: {e}")
+        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+@oauth2_router.post("/auth/logout")
+async def oauth2_logout():
+    """Logout and clear tokens"""
+    try:
+        if not wmc_service_instance:
+            raise HTTPException(status_code=503, detail="Service not available")
+
+        # Clear tokens
+        wmc_service_instance.oauth2_service.token = None
+        wmc_service_instance.auth_token = None
+
+        logger.info("✅ OAuth2 logout successful")
+
+        return {
+            "success": True,
+            "message": "Logged out successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Logout error: {e}")
+        raise HTTPException(status_code=500, detail=f"Logout failed: {str(e)}")
+
+@oauth2_router.get("/auth/refresh")
+async def refresh_token():
+    """Refresh access token using refresh token"""
+    try:
+        if not wmc_service_instance:
+            raise HTTPException(status_code=503, detail="Service not available")
+
+        token = await wmc_service_instance.oauth2_service.refresh_access_token()
+
+        logger.info("✅ Token refresh successful")
+
+        return {
+            "success": True,
+            "token_type": token.token_type,
+            "expires_in": token.expires_in,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            "message": "Token refreshed successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Token refresh error: {e}")
+        raise HTTPException(status_code=401, detail=f"Token refresh failed: {str(e)}")

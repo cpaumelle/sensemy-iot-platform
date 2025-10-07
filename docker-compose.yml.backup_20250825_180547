@@ -1,0 +1,187 @@
+# ─────────────────────────────────────────────────────────────────────
+# 📦 Docker Compose Configuration for SenseMy IoT Pipeline
+# 🗂️  File: docker-compose.yml
+# 🕒  Last Updated: 2025-08-20 17:30 UTC
+# 👤  Maintainer: Charles Paumelle
+# 🔄  Version: 4.1.03
+#
+# 🧱 Structure:
+#   - 01-ingest-server
+#   - 02-transform-service
+#   - 03-analytics-service
+#   - 04-tactacam-service (NEW)
+#   - Shared Postgres DBs
+#   - Caddy reverse proxy now in charliehub/reverse-proxy
+#
+# 📄 Environment file: .env
+# 🌐 Network: ${NETWORK_NAME} (external) and charliehub_net (external)
+# 📁 Volumes: per-service with persistent storage
+# ─────────────────────────────────────────────────────────────────────
+services:
+    ingest-database:
+        image: postgres:15
+        container_name: ingest-database
+        restart: unless-stopped
+        env_file:
+            - .env
+        environment:
+            - POSTGRES_USER=${INGEST_DB_USER}
+            - POSTGRES_PASSWORD=${INGEST_DB_PASSWORD}
+            - POSTGRES_DB=${INGEST_DB_NAME}
+        volumes:
+            - 01-db-ingest-database:/var/lib/postgresql/data
+            - ./01-ingest-server/initdb:/docker-entrypoint-initdb.d
+        ports:
+            - "127.0.0.1:${INGEST_DB_PORT}:5432"
+        networks:
+            - sensemy_network
+
+    transform-database:
+        container_name: transform-database
+        image: postgres:15
+        restart: always
+        ports:
+            - "127.0.0.1:${TRANSFORM_DB_PORT}:${TRANSFORM_DB_INTERNAL_PORT}"
+        env_file:
+            - .env
+        environment:
+            - POSTGRES_USER=${TRANSFORM_DB_USER}
+            - POSTGRES_PASSWORD=${TRANSFORM_DB_PASSWORD}
+            - POSTGRES_DB=${TRANSFORM_DB_NAME}
+        volumes:
+            - ./02-transform/app:/app
+            - 02-db-transform-database:/var/lib/postgresql/data
+            - ./02-transform/initdb:/docker-entrypoint-initdb.d
+        networks:
+            - sensemy_network
+
+    ingest-service:
+        container_name: ingest-service
+        restart: unless-stopped
+        build: ./01-ingest-server
+        env_file:
+            - .env
+        ports:
+            - "${INGEST_PORT}:8000"
+        volumes:
+            - ./01-ingest-server/app:/app
+            - ./01-ingest-server/initdb:/docker-entrypoint-initdb.d
+            - ./01-ingest-server/tools:/app/tools
+        networks:
+            - sensemy_network
+            - charliehub_net
+        depends_on:
+            - ingest-database
+
+    transform-service:
+        container_name: transform-service
+        restart: unless-stopped
+        build: ./02-transform
+        env_file:
+            - .env
+        ports:
+            - "${TRANSFORM_MANAGER_PORT}:9001"
+        volumes:
+            - ./02-transform/app:/app
+            - ./02-transform/initdb:/docker-entrypoint-initdb.d
+        networks:
+            - sensemy_network
+            - charliehub_net
+        depends_on:
+            - transform-database
+
+    analytics-service:
+        container_name: analytics-service
+        restart: unless-stopped
+        build: ./03-analytics
+        env_file:
+            - .env
+        ports:
+            - "7000:7000"
+        volumes:
+            - ./03-analytics/app:/app
+        networks:
+            - sensemy_network
+            - charliehub_net
+        depends_on:
+            - transform-database
+        environment:
+            - ANALYTICS_PORT=7000
+
+    adminer-ui:
+        build:
+            context: ./88-tools/adminer-custom
+            dockerfile: Dockerfile
+        container_name: adminer-ui
+        restart: always
+        ports:
+            - "${ADMINER_PORT}:8080"
+        environment:
+            - INGEST_DB_USER=${INGEST_DB_USER}
+            - INGEST_DB_NAME=${INGEST_DB_NAME}
+            - TRANSFORM_DB_USER=${TRANSFORM_DB_USER}
+            - TRANSFORM_DB_NAME=${TRANSFORM_DB_NAME}
+        networks:
+            - sensemy_network
+            - charliehub_net
+
+    ui-frontend:
+        build:
+            context: ./10-ui-frontend/sensemy-platform
+            args:
+                - UI_VERSION=4.0.0
+                - UI_ENVIRONMENT=${UI_ENVIRONMENT:-production}
+                - TRANSFORM_API_BASE=${TRANSFORM_API_DOMAIN}/v1
+        container_name: ui-frontend
+        restart: unless-stopped
+        ports:
+            - "${UI_FRONTEND_PORT:-8500}:80"
+        networks:
+            - sensemy_network
+            - charliehub_net
+        environment:
+            - UI_STATIC_PATH=${UI_STATIC_PATH:-/app/src}
+        healthcheck:
+            test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+            interval: 10s
+            timeout: 3s
+            retries: 5
+        read_only: true
+        tmpfs:
+            - /var/run
+            - /var/cache/nginx
+            - /var/tmp
+
+    # =============================================================================
+    # TACTACAM WILDLIFE CAMERA SERVICE
+    # =============================================================================
+
+    tactacam-service:
+        container_name: tactacam-service
+        restart: unless-stopped
+        build: ./04-tactacam
+        env_file: [.env]
+        ports:
+            - "${TACTACAM_PORT}:7200"
+        volumes:
+            - ./04-tactacam/app:/app
+        networks:
+            - sensemy_network
+            - charliehub_net
+        depends_on:
+            - ingest-database
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:7200/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+
+volumes:
+    01-db-ingest-database:
+    02-db-transform-database:
+
+networks:
+    sensemy_network:
+        external: true
+    charliehub_net:
+        external: true

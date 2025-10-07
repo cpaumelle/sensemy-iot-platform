@@ -1,0 +1,282 @@
+"""
+WMC Service - Backend Authentication with Saved Credentials
+Version: 3.0.0
+Created: 2025-08-20 17:20:00 UTC
+Authors: SenseMy IoT Development Team
+
+Purpose: Backend authentication using saved WMC credentials
+Users can scan QR codes directly without manual login
+"""
+
+import os
+import logging
+import asyncio
+import httpx
+from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class BackendToken:
+    """Simple backend token for WMC authentication"""
+    access_token: str
+    expires_at: datetime
+    token_type: str = "Bearer"
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.utcnow() >= self.expires_at
+
+class WMCService:
+    """WMC Service with backend authentication using saved credentials"""
+
+    def __init__(self, base_url: str = "https://wmc.wanesy.com"):
+        self.base_url = base_url
+        self.client = httpx.AsyncClient(timeout=30)
+        self.token: Optional[BackendToken] = None
+        self.auth_token = None  # For backward compatibility
+        
+        # Get credentials from environment
+        self.username = os.getenv('WMC_USERNAME', 'cpaumelle@microshare.io')
+        self.password = os.getenv('WMC_PASSWORD', 'Eh9Mr@KpsXxVHN')
+        
+        # Configuration for backward compatibility
+        self.config = type('Config', (), {
+            'base_url': base_url,
+            'username': self.username,
+            'password': self.password,
+        })()
+
+        logger.info(f"🔧 WMC Service initialized with backend auth for user: {self.username}")
+
+    async def close(self):
+        """Close HTTP client"""
+        await self.client.aclose()
+
+    async def authenticate_backend(self) -> bool:
+        """Authenticate using backend credentials"""
+        try:
+            logger.info("🔑 Authenticating with WMC using backend credentials...")
+            
+            if not self.username or not self.password:
+                logger.error("❌ Missing WMC credentials in environment")
+                return False
+            
+            # Try different authentication methods
+            methods = [
+                {"login": self.username, "password": self.password},
+                {"username": self.username, "password": self.password}
+            ]
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "WMC-Gateway-Scanner/3.0.0"
+            }
+            
+            for login_data in methods:
+                try:
+                    response = await self.client.post(
+                        f"{self.base_url}/gms/application/login",
+                        json=login_data,
+                        headers=headers
+                    )
+                    
+                    logger.info(f"🔄 Login attempt with {list(login_data.keys())[0]}: {response.status_code}")
+                    
+                    if response.status_code in [200, 201]:
+                        data = response.json()
+                        
+                        if "token" in data:
+                            # Create backend token with 1-hour expiry
+                            self.token = BackendToken(
+                                access_token=data["token"],
+                                expires_at=datetime.utcnow() + timedelta(hours=1)
+                            )
+                            self.auth_token = self.token  # Backward compatibility
+                            
+                            logger.info("✅ Backend authentication successful!")
+                            return True
+                        else:
+                            logger.warning("⚠️ Login response missing token field")
+                    else:
+                        logger.warning(f"⚠️ Login failed: {response.status_code} - {response.text[:100]}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Login method failed: {e}")
+                    continue
+            
+            logger.error("❌ All authentication methods failed")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Backend authentication error: {e}")
+            return False
+
+    async def ensure_authenticated(self) -> bool:
+        """Ensure we have a valid authentication token"""
+        if self.token and not self.token.is_expired:
+            return True
+            
+        logger.info("🔄 Token expired or missing, re-authenticating...")
+        return await self.authenticate_backend()
+
+    async def get_headers(self) -> Dict[str, str]:
+        """Get headers with authentication token"""
+        if not await self.ensure_authenticated():
+            raise Exception("Failed to authenticate with WMC")
+            
+        return {
+            "Authorization": f"{self.token.token_type} {self.token.access_token}",
+            "Accept": "application/vnd.kerlink.iot-v1+json",
+            "Content-Type": "application/vnd.kerlink.iot-v1+json",
+            "User-Agent": "WMC-Gateway-Scanner/3.0.0"
+        }
+
+    async def get_gateway_by_eui(self, gateway_eui: str) -> Optional[Dict[str, Any]]:
+        """Get gateway information by EUI using backend authentication"""
+        try:
+            logger.info(f"🔍 Looking up gateway: {gateway_eui}")
+            
+            headers = await self.get_headers()
+            
+            # Get list of gateways
+            response = await self.client.get(
+                f"{self.base_url}/gms/application/gateways",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                gateways = response.json()
+                logger.info(f"📊 Retrieved {len(gateways) if isinstance(gateways, list) else 'unknown'} gateways from WMC")
+                
+                # Find gateway by EUI
+                for gateway in gateways:
+                    if gateway.get("eui", "").upper() == gateway_eui.upper():
+                        # Get detailed gateway information
+                        gateway_id = gateway.get("id")
+                        if gateway_id:
+                            detail_response = await self.client.get(
+                                f"{self.base_url}/gms/application/gateways/{gateway_id}",
+                                headers=headers
+                            )
+                            
+                            if detail_response.status_code == 200:
+                                gateway_detail = detail_response.json()
+                                gateway_detail["lookup_timestamp"] = datetime.utcnow().isoformat()
+                                gateway_detail["source"] = "wmc_backend_api"
+                                
+                                logger.info(f"✅ Gateway found: {gateway.get('name', gateway_eui)}")
+                                return gateway_detail
+                
+                logger.warning(f"⚠️ Gateway not found: {gateway_eui}")
+                return None
+                
+            else:
+                logger.error(f"❌ Failed to fetch gateways: {response.status_code} - {response.text[:100]}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error looking up gateway {gateway_eui}: {e}")
+            return None
+
+    async def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """Get current user information"""
+        try:
+            headers = await self.get_headers()
+            
+            response = await self.client.get(
+                f"{self.base_url}/gms/application/userInfo",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"❌ Failed to get user info: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting user info: {e}")
+            return None
+
+    # =============================================================================
+    # Legacy Methods (For Route Compatibility)
+    # =============================================================================
+
+    async def test_connection(self) -> bool:
+        """Test WMC API connectivity"""
+        try:
+            response = await self.client.get(f"{self.base_url}/gms/application/doc", timeout=10)
+            return response.status_code in [200, 302]  # 302 might redirect to login
+        except Exception as e:
+            logger.error(f"❌ Connection test failed: {e}")
+            return False
+
+    async def authenticate(self) -> bool:
+        """Legacy authenticate method - uses backend auth"""
+        return await self.authenticate_backend()
+
+    async def get_connection_status(self) -> Dict[str, Any]:
+        """Get current connection and authentication status"""
+        connected = await self.test_connection()
+        authenticated = self.token and not self.token.is_expired if self.token else False
+        
+        return {
+            "connected": connected,
+            "authenticated": authenticated,
+            "token_valid": authenticated,
+            "auth_method": "backend_credentials",
+            "base_url": self.base_url,
+            "username": self.username,
+            "expires_at": self.token.expires_at.isoformat() if self.token else None
+        }
+
+    def get_oauth2_status(self) -> Dict[str, Any]:
+        """Get authentication status (backend credentials format)"""
+        authenticated = self.token and not self.token.is_expired if self.token else False
+        
+        return {
+            "authenticated": authenticated,
+            "token_valid": authenticated,
+            "expires_at": self.token.expires_at.isoformat() if self.token else None,
+            "has_refresh_token": False,  # Backend auth doesn't use refresh tokens
+            "scope": "backend_authentication",
+            "auth_method": "backend_credentials"
+        }
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Comprehensive service health check"""
+        connection_status = await self.get_connection_status()
+        
+        return {
+            "service": "wmc-gateway-scanner",
+            "version": "3.0.0",
+            "status": "WMC Gateway Scanner healthy ✅",
+            "wmc_api_status": "connected" if connection_status["connected"] else "disconnected",
+            "authentication": {
+                "method": "backend_credentials",
+                "authenticated": connection_status["authenticated"],
+                "token_valid": connection_status["token_valid"],
+                "username": self.username,
+                "auto_login": True
+            },
+            "features": [
+                "qr_code_scanning",
+                "wmc_api_integration", 
+                "mobile_responsive_ui",
+                "real_time_gateway_status",
+                "backend_authentication",
+                "automatic_login"
+            ],
+            "templates_available": True
+        }
+
+    def __del__(self):
+        """Cleanup when service is destroyed"""
+        try:
+            asyncio.create_task(self.close())
+        except:
+            pass

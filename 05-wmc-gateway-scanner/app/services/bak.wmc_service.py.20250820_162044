@@ -1,0 +1,202 @@
+"""
+WMC API Integration Service
+Version: 1.0.0
+Created: 2025-08-20 16:30:00 UTC
+
+Handles authentication and gateway queries with Wanesy Management Center API
+"""
+
+import httpx
+import asyncio
+import os
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class WMCConfig:
+    """WMC API configuration"""
+    base_url: str
+    username: str
+    password: str
+    timeout: int = 30
+
+@dataclass
+class AuthToken:
+    """WMC authentication token"""
+    token: str
+    expires_at: datetime
+    
+    @property
+    def is_expired(self) -> bool:
+        return datetime.utcnow() >= self.expires_at
+
+class WMCService:
+    """WMC API client service"""
+    
+    def __init__(self):
+        self.config = WMCConfig(
+            base_url=os.getenv("WMC_BASE_URL", "https://wmc.wanesy.com"),
+            username=os.getenv("WMC_USERNAME", ""),
+            password=os.getenv("WMC_PASSWORD", "")
+        )
+        self.client = httpx.AsyncClient(timeout=self.config.timeout)
+        self.auth_token: Optional[AuthToken] = None
+        
+        if not self.config.username or not self.config.password:
+            logger.warning("⚠️ WMC credentials not configured")
+    
+    async def close(self):
+        """Close HTTP client"""
+        await self.client.aclose()
+    
+    async def test_connection(self) -> bool:
+        """Test WMC API connectivity"""
+        try:
+            response = await self.client.get(f"{self.config.base_url}/gms/application/doc")
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"❌ WMC connection test failed: {e}")
+            return False
+    
+    async def get_connection_status(self) -> Dict[str, Any]:
+        """Get WMC connection status"""
+        try:
+            connected = await self.test_connection()
+            auth_valid = self.auth_token is not None and not self.auth_token.is_expired
+            
+            return {
+                "connected": connected,
+                "authenticated": auth_valid,
+                "base_url": self.config.base_url,
+                "last_check": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            return {
+                "connected": False,
+                "authenticated": False,
+                "error": str(e),
+                "last_check": datetime.utcnow().isoformat()
+            }
+    
+    async def authenticate(self) -> bool:
+        """Authenticate with WMC API and get JWT token"""
+        try:
+            login_data = {
+                "login": self.config.username,
+                "password": self.config.password
+            }
+            
+            logger.info("🔑 Authenticating with WMC API...")
+            response = await self.client.post(
+                f"{self.config.base_url}/gms/application/login",
+                json=login_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code in [200, 201]:
+                token_data = response.json()
+                token = token_data.get("token")
+                
+                if token:
+                    # JWT tokens typically expire in 1 hour, set expiry to 50 minutes for safety
+                    expires_at = datetime.utcnow() + timedelta(minutes=50)
+                    self.auth_token = AuthToken(token=token, expires_at=expires_at)
+                    
+                    logger.info("✅ WMC authentication successful")
+                    return True
+                    
+            logger.error(f"❌ WMC authentication failed: {response.status_code}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ WMC authentication error: {e}")
+            return False
+    
+    async def ensure_authenticated(self) -> bool:
+        """Ensure we have a valid authentication token"""
+        if self.auth_token is None or self.auth_token.is_expired:
+            return await self.authenticate()
+        return True
+    
+    async def get_headers(self) -> Dict[str, str]:
+        """Get headers with authentication token"""
+        if not await self.ensure_authenticated():
+            raise Exception("Failed to authenticate with WMC API")
+            
+        return {
+            "Authorization": f"Bearer {self.auth_token.token}",
+            "Content-Type": "application/json"
+        }
+    
+    async def get_gateway_by_eui(self, gateway_eui: str) -> Optional[Dict[str, Any]]:
+        """Get gateway information by EUI"""
+        try:
+            headers = await self.get_headers()
+            
+            logger.info(f"🔍 Looking up gateway: {gateway_eui}")
+            
+            # First, get list of gateways to find the correct ID
+            response = await self.client.get(
+                f"{self.config.base_url}/gms/application/gateways",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                gateways = response.json()
+                
+                # Find gateway by EUI
+                for gateway in gateways:
+                    if gateway.get("eui", "").upper() == gateway_eui.upper():
+                        # Get detailed gateway information
+                        gateway_id = gateway.get("id")
+                        if gateway_id:
+                            detail_response = await self.client.get(
+                                f"{self.config.base_url}/gms/application/gateways/{gateway_id}",
+                                headers=headers
+                            )
+                            
+                            if detail_response.status_code == 200:
+                                gateway_detail = detail_response.json()
+                                
+                                # Enhance with real-time status
+                                gateway_detail["lookup_timestamp"] = datetime.utcnow().isoformat()
+                                gateway_detail["source"] = "wmc_api"
+                                
+                                logger.info(f"✅ Gateway found: {gateway.get('name', gateway_eui)}")
+                                return gateway_detail
+                
+                logger.warning(f"⚠️ Gateway not found: {gateway_eui}")
+                return None
+                
+            else:
+                logger.error(f"❌ Failed to fetch gateways: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error looking up gateway {gateway_eui}: {e}")
+            return None
+    
+    async def get_gateway_statistics(self, gateway_id: str) -> Optional[Dict[str, Any]]:
+        """Get gateway statistics and performance metrics"""
+        try:
+            headers = await self.get_headers()
+            
+            # Get gateway statistics (endpoint may vary based on WMC version)
+            response = await self.client.get(
+                f"{self.config.base_url}/gms/application/gateways/{gateway_id}/statistics",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"⚠️ Gateway statistics not available: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting gateway statistics: {e}")
+            return None

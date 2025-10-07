@@ -1,0 +1,79 @@
+# main.py - analytics
+# Version: 2.0.0 - 2025-08-11 19:25:00 UTC
+# Based on: Transform service main.py patterns
+# Enhanced with analytics routers and environmental analytics integration
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+import os
+
+# Import routers
+from routers.aggregations import router as aggregations_router
+from routers.environmental import router as environmental_router
+
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("analytics-service")
+
+app = FastAPI(
+    title="SenseMy Analytics Service",
+    version="2.0.0",
+    description="SenseMy IoT Analytics and Environmental Data Management"
+)
+
+# CORS - same pattern as transform service
+cors_origins = os.getenv("CORS_ORIGINS", "").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in cors_origins if origin.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Health endpoint
+@app.get("/health")
+async def health():
+    return {
+        "status": "analytics service healthy ✅",
+        "version": "2.0.0",
+        "service": "analytics",
+        "database": "connected to analytics schema",
+        "features": [
+            "environmental_analytics",
+            "device_health_monitoring", 
+            "data_dictionary_normalization"
+        ]
+    }
+
+# Root endpoint
+@app.get("/")
+async def root():
+    return {
+        "service": "SenseMy Analytics Service",
+        "version": "2.0.0",
+        "endpoints": [
+            "/health",
+            "/docs",
+            "/v1/aggregations",
+            "/v1/aggregations/analytics/occupancy",
+            "/v1/environment/latest",
+            "/v1/environment/hourly", 
+            "/v1/environment/health",
+            "/v1/environment/summary"
+        ],
+        "features": {
+            "environmental_analytics": "Temperature, humidity, CO2 monitoring",
+            "device_health": "Battery and connectivity monitoring",
+            "data_dictionary": "Normalized field access with units and precision"
+        }
+    }
+
+# Include routers
+app.include_router(aggregations_router, prefix="/v1/aggregations")
+app.include_router(environmental_router, prefix="/v1/environment")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7000)

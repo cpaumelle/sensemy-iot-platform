@@ -1,0 +1,20 @@
+# Version: 0.1.0 - 2025-07-08 12:00 UTC
+# Fetches device context from database for a given deveui
+
+def fetch_device_context(conn, deveui: str):
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT device_type_id, site_id, zone_id
+        FROM device_context
+        WHERE deveui = %s
+    """, (deveui,))
+    row = cursor.fetchone()
+    cursor.close()
+
+    if row:
+        return {
+            "device_type_id": row[0],
+            "site_id": row[1],
+            "zone_id": row[2]
+        }
+    return None

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMC Gateway Scanner</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>🔍 WMC Gateway Scanner</h1>
+            <p>Scan gateway QR code for real-time status</p>
+        </header>
+
+        <!-- Status Indicators -->
+        <div class="status-bar">
+            <div class="status-item" id="wmc-status">
+                <span class="status-icon">🔄</span>
+                <span class="status-text">Checking WMC...</span>
+            </div>
+            <div class="status-item" id="camera-status">
+                <span class="status-icon">📱</span>
+                <span class="status-text">Camera ready</span>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- QR Scanner Section -->
+            <section class="scanner-section">
+                <div class="scanner-container">
+                    <div id="qr-reader" class="qr-reader"></div>
+                    <div class="scanner-controls">
+                        <button id="start-scan-btn" class="btn btn-primary">
+                            📷 Start Scanning
+                        </button>
+                        <button id="stop-scan-btn" class="btn btn-secondary" style="display:none;">
+                            ⏹️ Stop Scanning
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Manual EUI Input -->
+                <div class="manual-input">
+                    <h3>Or enter Gateway EUI manually:</h3>
+                    <div class="input-group">
+                        <input type="text" id="manual-eui" placeholder="Enter Gateway EUI (e.g., 7276FF002E123456)" maxlength="16">
+                        <button id="lookup-btn" class="btn btn-primary">🔍 Lookup</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="results-section" style="display:none;">
+                <h2>Gateway Information</h2>
+                <div id="gateway-info" class="gateway-info">
+                    <!-- Gateway information will be populated here -->
+                </div>
+            </section>
+
+            <!-- Error Section -->
+            <div id="error-section" class="error-section" style="display:none;">
+                <h3>❌ Error</h3>
+                <p id="error-message"></p>
+                <button id="clear-error-btn" class="btn btn-secondary">Clear</button>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>SenseMy IoT Platform - WMC Gateway Scanner v1.0.0</p>
+            <div class="footer-links">
+                <a href="/docs" target="_blank">📖 API Docs</a>
+                <a href="/health" target="_blank">🏥 Health</a>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

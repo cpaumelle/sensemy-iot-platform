@@ -1,0 +1,451 @@
+/*
+WMC Gateway Scanner - JavaScript Application
+Version: 1.0.0
+Created: 2025-08-20 16:45:00 UTC
+
+QR code scanning and WMC API integration
+*/
+
+class WMCGatewayScanner {
+    constructor() {
+        this.qrScanner = null;
+        this.isScanning = false;
+        this.apiBaseUrl = '/api/v1';
+        
+        this.initializeApp();
+    }
+    
+    async initializeApp() {
+        console.log('🚀 Initializing WMC Gateway Scanner v1.0.0');
+        
+        // Bind event listeners
+        this.bindEventListeners();
+        
+        // Check WMC connection status
+        await this.checkWMCStatus();
+        
+        // Check camera permissions
+        await this.checkCameraPermissions();
+        
+        console.log('✅ WMC Gateway Scanner initialized');
+    }
+    
+    bindEventListeners() {
+        // QR Scanner controls
+        document.getElementById('start-scan-btn').addEventListener('click', () => this.startScanning());
+        document.getElementById('stop-scan-btn').addEventListener('click', () => this.stopScanning());
+        
+        // Manual EUI input
+        document.getElementById('lookup-btn').addEventListener('click', () => this.lookupManualEUI());
+        document.getElementById('manual-eui').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this.lookupManualEUI();
+            }
+        });
+        
+        // Error handling
+        document.getElementById('clear-error-btn').addEventListener('click', () => this.clearError());
+        
+        // Format EUI input as user types
+        document.getElementById('manual-eui').addEventListener('input', (e) => {
+            this.formatEUIInput(e.target);
+        });
+    }
+    
+    formatEUIInput(input) {
+        // Remove non-hex characters and convert to uppercase
+        let value = input.value.replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+        
+        // Limit to 16 characters
+        if (value.length > 16) {
+            value = value.substring(0, 16);
+        }
+        
+        input.value = value;
+        
+        // Real-time validation
+        this.validateEUIInput(value);
+    }
+    
+    validateEUIInput(eui) {
+        const isValid = eui.length >= 8 && eui.length <= 16 && /^[0-9A-F]+$/.test(eui);
+        const lookupBtn = document.getElementById('lookup-btn');
+        
+        if (isValid) {
+            lookupBtn.disabled = false;
+            lookupBtn.classList.remove('disabled');
+        } else {
+            lookupBtn.disabled = true;
+            lookupBtn.classList.add('disabled');
+        }
+    }
+    
+    async checkWMCStatus() {
+        const statusElement = document.getElementById('wmc-status');
+        
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/auth/status`);
+            const status = await response.json();
+            
+            if (status.wmc_connection.connected) {
+                this.updateStatusItem(statusElement, '✅', 'WMC Connected', 'status-online');
+            } else {
+                this.updateStatusItem(statusElement, '❌', 'WMC Offline', 'status-offline');
+            }
+            
+        } catch (error) {
+            console.error('❌ Failed to check WMC status:', error);
+            this.updateStatusItem(statusElement, '⚠️', 'WMC Unknown', 'status-unknown');
+        }
+    }
+    
+    async checkCameraPermissions() {
+        const statusElement = document.getElementById('camera-status');
+        
+        try {
+            // Check if getUserMedia is available
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                this.updateStatusItem(statusElement, '❌', 'Camera not supported', 'status-offline');
+                return;
+            }
+            
+            // Test camera access
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            stream.getTracks().forEach(track => track.stop()); // Stop immediately
+            
+            this.updateStatusItem(statusElement, '✅', 'Camera Ready', 'status-online');
+            
+        } catch (error) {
+            console.error('❌ Camera permission error:', error);
+            this.updateStatusItem(statusElement, '⚠️', 'Camera Access Denied', 'status-offline');
+        }
+    }
+    
+    updateStatusItem(element, icon, text, statusClass) {
+        const iconElement = element.querySelector('.status-icon');
+        const textElement = element.querySelector('.status-text');
+        
+        iconElement.textContent = icon;
+        textElement.textContent = text;
+        
+        // Remove existing status classes
+        element.classList.remove('status-online', 'status-offline', 'status-unknown');
+        element.classList.add(statusClass);
+    }
+    
+    async startScanning() {
+        try {
+            console.log('📷 Starting QR code scanning...');
+            
+            const startBtn = document.getElementById('start-scan-btn');
+            const stopBtn = document.getElementById('stop-scan-btn');
+            
+            // Initialize QR scanner
+            this.qrScanner = new Html5Qrcode("qr-reader");
+            
+            // Configure scanner
+            const config = {
+                fps: 10,
+                qrbox: { width: 250, height: 250 },
+                aspectRatio: 1.0
+            };
+            
+            // Start scanning
+            await this.qrScanner.start(
+                { facingMode: "environment" }, // Prefer back camera
+                config,
+                (decodedText, decodedResult) => {
+                    console.log('✅ QR Code detected:', decodedText);
+                    this.handleQRCodeDetected(decodedText);
+                },
+                (errorMessage) => {
+                    // Handle scan errors (usually just no QR code found)
+                    // Don't log these as they're very frequent
+                }
+            );
+            
+            // Update UI
+            this.isScanning = true;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'inline-flex';
+            
+            console.log('✅ QR scanning started');
+            
+        } catch (error) {
+            console.error('❌ Failed to start scanning:', error);
+            this.showError('Failed to start camera. Please check permissions and try again.');
+        }
+    }
+    
+    async stopScanning() {
+        try {
+            if (this.qrScanner && this.isScanning) {
+                await this.qrScanner.stop();
+                this.qrScanner.clear();
+                this.qrScanner = null;
+            }
+            
+            // Update UI
+            this.isScanning = false;
+            document.getElementById('start-scan-btn').style.display = 'inline-flex';
+            document.getElementById('stop-scan-btn').style.display = 'none';
+            
+            console.log('⏹️ QR scanning stopped');
+            
+        } catch (error) {
+            console.error('❌ Error stopping scanner:', error);
+        }
+    }
+    
+    async handleQRCodeDetected(qrData) {
+        console.log('🔍 Processing QR code:', qrData);
+        
+        // Stop scanning temporarily
+        if (this.isScanning) {
+            await this.stopScanning();
+        }
+        
+        // Extract gateway EUI from QR code
+        const gatewayEUI = this.extractGatewayEUI(qrData);
+        
+        if (gatewayEUI) {
+            // Populate manual input field
+            document.getElementById('manual-eui').value = gatewayEUI;
+            
+            // Lookup gateway
+            await this.lookupGateway(gatewayEUI);
+        } else {
+            this.showError('Invalid QR code format. Please scan a gateway QR code.');
+        }
+    }
+    
+    extractGatewayEUI(qrData) {
+        // Try different QR code formats
+        
+        // 1. Direct EUI (16 hex characters)
+        const directEUI = qrData.match(/^[0-9A-Fa-f]{16}$/);
+        if (directEUI) {
+            return directEUI[0].toUpperCase();
+        }
+        
+        // 2. EUI with separators (remove colons, dashes, spaces)
+        const euiWithSeparators = qrData.replace(/[:\-\s]/g, '');
+        if (/^[0-9A-Fa-f]{16}$/.test(euiWithSeparators)) {
+            return euiWithSeparators.toUpperCase();
+        }
+        
+        // 3. URL with EUI parameter
+        const urlMatch = qrData.match(/[?&]eui=([0-9A-Fa-f]{16})/i);
+        if (urlMatch) {
+            return urlMatch[1].toUpperCase();
+        }
+        
+        // 4. JSON-like format
+        try {
+            const jsonData = JSON.parse(qrData);
+            if (jsonData.eui || jsonData.gateway_eui || jsonData.gatewayEui) {
+                const eui = jsonData.eui || jsonData.gateway_eui || jsonData.gatewayEui;
+                if (/^[0-9A-Fa-f]{16}$/.test(eui.replace(/[:\-\s]/g, ''))) {
+                    return eui.replace(/[:\-\s]/g, '').toUpperCase();
+                }
+            }
+        } catch (e) {
+            // Not JSON, continue
+        }
+        
+        // 5. Look for any 16-character hex string in the data
+        const hexMatch = qrData.match(/[0-9A-Fa-f]{16}/);
+        if (hexMatch) {
+            return hexMatch[0].toUpperCase();
+        }
+        
+        return null;
+    }
+    
+    async lookupManualEUI() {
+        const euiInput = document.getElementById('manual-eui');
+        const eui = euiInput.value.trim();
+        
+        if (!eui) {
+            this.showError('Please enter a Gateway EUI');
+            return;
+        }
+        
+        await this.lookupGateway(eui);
+    }
+    
+    async lookupGateway(gatewayEUI) {
+        console.log(`🔍 Looking up gateway: ${gatewayEUI}`);
+        
+        // Show loading state
+        this.showLoading(true);
+        this.clearError();
+        
+        try {
+            // Validate EUI format first
+            const validateResponse = await fetch(`${this.apiBaseUrl}/gateways/validate-eui/${gatewayEUI}`);
+            const validation = await validateResponse.json();
+            
+            if (!validation.is_valid) {
+                throw new Error(`Invalid Gateway EUI format: ${gatewayEUI}`);
+            }
+            
+            // Lookup gateway from WMC
+            const lookupResponse = await fetch(`${this.apiBaseUrl}/gateways/lookup/${gatewayEUI}?include_stats=true`);
+            
+            if (!lookupResponse.ok) {
+                const errorData = await lookupResponse.json();
+                throw new Error(errorData.detail || `HTTP ${lookupResponse.status}`);
+            }
+            
+            const result = await lookupResponse.json();
+            
+            // Display results
+            this.displayGatewayInfo(result);
+            
+            console.log('✅ Gateway lookup successful');
+            
+        } catch (error) {
+            console.error('❌ Gateway lookup failed:', error);
+            this.showError(`Gateway lookup failed: ${error.message}`);
+        } finally {
+            this.showLoading(false);
+        }
+    }
+    
+    displayGatewayInfo(result) {
+        const gateway = result.gateway;
+        const resultsSection = document.getElementById('results-section');
+        const gatewayInfoDiv = document.getElementById('gateway-info');
+        
+        // Format gateway information
+        const html = `
+            <div class="info-card fade-in">
+                <h4>📡 Gateway Details</h4>
+                <p><strong>Name:</strong> ${gateway.name || 'Unknown'}</p>
+                <p><strong>EUI:</strong> ${this.formatEUI(gateway.eui || result.clean_eui)}</p>
+                <p><strong>ID:</strong> ${gateway.id || 'N/A'}</p>
+                <p><strong>Model:</strong> ${gateway.model || 'Unknown'}</p>
+            </div>
+            
+            <div class="info-card fade-in">
+                <h4>🌐 Network Status</h4>
+                <p><strong>Status:</strong> <span class="status-badge ${this.getStatusClass(gateway.status)}">${gateway.status || 'Unknown'}</span></p>
+                <p><strong>Last Seen:</strong> ${gateway.lastSeenAt ? new Date(gateway.lastSeenAt).toLocaleString() : 'Unknown'}</p>
+                <p><strong>Network:</strong> ${gateway.networkServerUrl || 'N/A'}</p>
+            </div>
+            
+            <div class="info-card fade-in">
+                <h4>📍 Location</h4>
+                <p><strong>Site:</strong> ${gateway.site || 'Unknown'}</p>
+                <p><strong>Description:</strong> ${gateway.description || 'No description'}</p>
+                <p><strong>Coordinates:</strong> ${gateway.latitude && gateway.longitude ? `${gateway.latitude}, ${gateway.longitude}` : 'Not set'}</p>
+            </div>
+            
+            <div class="info-card fade-in">
+                <h4>⚡ Performance</h4>
+                <p><strong>Firmware:</strong> ${gateway.firmwareVersion || 'Unknown'}</p>
+                <p><strong>Uptime:</strong> ${gateway.uptime || 'Unknown'}</p>
+                ${gateway.statistics ? this.formatStatistics(gateway.statistics) : '<p>Statistics not available</p>'}
+            </div>
+            
+            <div class="info-card fade-in">
+                <h4>🕒 Lookup Information</h4>
+                <p><strong>Source:</strong> WMC API</p>
+                <p><strong>Retrieved:</strong> ${new Date().toLocaleString()}</p>
+                <p><strong>Requested EUI:</strong> ${result.requested_eui}</p>
+            </div>
+        `;
+        
+        gatewayInfoDiv.innerHTML = html;
+        resultsSection.style.display = 'block';
+        
+        // Scroll to results
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    formatEUI(eui) {
+        if (!eui) return 'Unknown';
+        
+        // Insert colons every 2 characters
+        return eui.match(/.{1,2}/g).join(':');
+    }
+    
+    getStatusClass(status) {
+        if (!status) return 'status-unknown';
+        
+        const statusLower = status.toLowerCase();
+        if (statusLower.includes('online') || statusLower.includes('active')) {
+            return 'status-online';
+        } else if (statusLower.includes('offline') || statusLower.includes('inactive')) {
+            return 'status-offline';
+        }
+        return 'status-unknown';
+    }
+    
+    formatStatistics(stats) {
+        if (!stats || typeof stats !== 'object') {
+            return '<p>No statistics available</p>';
+        }
+        
+        let html = '';
+        
+        // Common statistics fields
+        if (stats.packetsReceived !== undefined) {
+            html += `<p><strong>Packets Received:</strong> ${stats.packetsReceived.toLocaleString()}</p>`;
+        }
+        if (stats.packetsTransmitted !== undefined) {
+            html += `<p><strong>Packets Transmitted:</strong> ${stats.packetsTransmitted.toLocaleString()}</p>`;
+        }
+        if (stats.rssi !== undefined) {
+            html += `<p><strong>RSSI:</strong> ${stats.rssi} dBm</p>`;
+        }
+        if (stats.snr !== undefined) {
+            html += `<p><strong>SNR:</strong> ${stats.snr} dB</p>`;
+        }
+        
+        return html || '<p>No detailed statistics available</p>';
+    }
+    
+    showError(message) {
+        const errorSection = document.getElementById('error-section');
+        const errorMessage = document.getElementById('error-message');
+        
+        errorMessage.textContent = message;
+        errorSection.style.display = 'block';
+        
+        // Scroll to error
+        errorSection.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    clearError() {
+        document.getElementById('error-section').style.display = 'none';
+    }
+    
+    showLoading(show) {
+        const lookupBtn = document.getElementById('lookup-btn');
+        const gatewayInfoDiv = document.getElementById('gateway-info');
+        
+        if (show) {
+            lookupBtn.textContent = '🔄 Looking up...';
+            lookupBtn.disabled = true;
+            gatewayInfoDiv.classList.add('loading');
+        } else {
+            lookupBtn.textContent = '🔍 Lookup';
+            lookupBtn.disabled = false;
+            gatewayInfoDiv.classList.remove('loading');
+        }
+    }
+}
+
+// Initialize the application when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    new WMCGatewayScanner();
+});
+
+// Handle page visibility changes (pause scanning when tab not visible)
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden && window.wmcScanner && window.wmcScanner.isScanning) {
+        window.wmcScanner.stopScanning();
+    }
+});

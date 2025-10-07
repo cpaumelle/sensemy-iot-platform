@@ -1,0 +1,45 @@
+"""
+WMC Gateway Scanner – Main Entrypoint
+Version: 1.1.0
+Last Updated: 2025-08-20 20:35 UTC
+Authors: SenseMy IoT Team
+
+Changelog:
+- Switched to app-factory (create_app) with clean imports
+- Removed any in-module uvicorn.run or reload behavior
+- Includes health router; other routers are optional and safe
+"""
+
+from fastapi import FastAPI
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="WMC Gateway Scanner", version="1.1.0")
+
+    # Routers — each import is inside the factory to avoid circulars at import time
+    try:
+        from app.routes import health as health_routes
+        app.include_router(health_routes.router)
+    except Exception:
+        # Health is optional but recommended; app can still start without it
+        pass
+
+    try:
+        # These will be present in your tree; if not, app still starts
+        from app.routes.oauth2_routes import oauth2_router
+        app.include_router(oauth2_router)
+    except Exception:
+        pass
+
+    try:
+        from app.routes.gateway_routes import gateway_router
+        app.include_router(gateway_router)
+    except Exception:
+        pass
+
+    return app
+
+
+# Local/dev launcher only; container uses uvicorn with --factory
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:create_app", factory=True, host="0.0.0.0", port=7300)

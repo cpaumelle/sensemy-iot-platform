@@ -1,0 +1,59 @@
+# Environment files
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+
+# Backup files
+*.backup
+*.bak
+*backup*
+backup_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Temporary files
+*.tmp
+tmp/
+*.tar.gz
+
+# Node modules
+node_modules/
+dist/
+build/
+
+# Testing artifacts
+test_*.log
+*.json.bak

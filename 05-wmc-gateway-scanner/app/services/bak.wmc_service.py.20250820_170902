@@ -1,0 +1,203 @@
+"""
+WMC Service - OAuth2 Integration Wrapper
+Version: 2.1.0
+Created: 2025-08-20 16:45:00 UTC
+Authors: SenseMy IoT Development Team
+
+Purpose: Wrapper service that integrates OAuth2 authentication with existing route expectations
+Combines OAuth2 flow with traditional service methods expected by routes
+"""
+
+import os
+import logging
+import asyncio
+from typing import Optional, Dict, Any
+from datetime import datetime
+
+# Import our OAuth2 service
+from .wmc_oauth2_service import WMCOAuth2Service, OAuth2Token
+
+logger = logging.getLogger(__name__)
+
+class WMCService:
+    """
+    WMC Service wrapper that provides both OAuth2 and traditional authentication methods
+    Bridges OAuth2 implementation with existing route expectations
+    """
+
+    def __init__(self, base_url: str = "https://wmc.wanesy.com"):
+        self.base_url = base_url
+        self.oauth2_service = WMCOAuth2Service(base_url)
+        
+        # For backward compatibility with existing routes
+        self.auth_token = None
+        
+        # Configuration for traditional auth (if needed)
+        self.config = type('Config', (), {
+            'base_url': base_url,
+            'username': os.getenv('WMC_USERNAME', ''),
+            'password': os.getenv('WMC_PASSWORD', ''),
+        })()
+
+    async def close(self):
+        """Close the service and cleanup resources"""
+        await self.oauth2_service.close()
+
+    # =============================================================================
+    # OAuth2 Methods (New)
+    # =============================================================================
+
+    def get_authorization_url(self, state: Optional[str] = None) -> tuple[str, str, str]:
+        """
+        Generate OAuth2 authorization URL for user login
+        Returns: (authorization_url, state, code_verifier)
+        """
+        return self.oauth2_service.get_authorization_url(state)
+
+    async def exchange_code_for_token(self, authorization_code: str, code_verifier: str) -> OAuth2Token:
+        """Exchange OAuth2 authorization code for access token"""
+        token = await self.oauth2_service.exchange_code_for_token(authorization_code, code_verifier)
+        
+        # Set auth_token for backward compatibility
+        self.auth_token = token
+        self.oauth2_service.token = token
+        
+        return token
+
+    def get_oauth2_status(self) -> Dict[str, Any]:
+        """Get OAuth2 authentication status"""
+        return self.oauth2_service.get_auth_status()
+
+    # =============================================================================
+    # Traditional Methods (For Route Compatibility)
+    # =============================================================================
+
+    async def test_connection(self) -> bool:
+        """Test WMC API connectivity"""
+        try:
+            # Test OAuth2 auth domain connectivity
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(f"https://{self.oauth2_service.config.auth_domain}/")
+                return response.status_code == 200
+        except Exception as e:
+            logger.error(f"❌ Connection test failed: {e}")
+            return False
+
+    async def authenticate(self) -> bool:
+        """
+        Traditional authenticate method - returns OAuth2 status
+        Note: Actual OAuth2 flow must be done through web interface
+        """
+        # Check if we already have a valid token
+        if self.oauth2_service.token and not self.oauth2_service.token.is_expired:
+            self.auth_token = self.oauth2_service.token
+            return True
+        
+        # Try to refresh if we have a refresh token
+        if self.oauth2_service.token and self.oauth2_service.token.refresh_token:
+            try:
+                await self.oauth2_service.refresh_access_token()
+                self.auth_token = self.oauth2_service.token
+                return True
+            except:
+                pass
+        
+        # No valid token - need OAuth2 flow
+        logger.warning("⚠️ No valid token - OAuth2 flow required through web interface")
+        return False
+
+    async def get_connection_status(self) -> Dict[str, Any]:
+        """Get current connection and authentication status"""
+        connected = await self.test_connection()
+        oauth2_status = self.get_oauth2_status()
+        
+        return {
+            "connected": connected,
+            "authenticated": oauth2_status["authenticated"],
+            "token_valid": oauth2_status["token_valid"],
+            "auth_method": "oauth2",
+            "base_url": self.base_url,
+            "auth_domain": f"https://{self.oauth2_service.config.auth_domain}",
+            "expires_at": oauth2_status["expires_at"],
+            "has_refresh_token": oauth2_status["has_refresh_token"]
+        }
+
+    # =============================================================================
+    # Gateway Methods
+    # =============================================================================
+
+    async def get_gateway_by_eui(self, gateway_eui: str) -> Optional[Dict[str, Any]]:
+        """Get gateway information by EUI"""
+        try:
+            gateway_info = await self.oauth2_service.get_gateway_by_eui(gateway_eui)
+            return gateway_info
+        except Exception as e:
+            logger.error(f"❌ Gateway lookup error: {e}")
+            return None
+
+    async def get_gateway_statistics(self, gateway_id: str) -> Optional[Dict[str, Any]]:
+        """Get gateway statistics (if authenticated)"""
+        try:
+            if not await self.oauth2_service.ensure_valid_token():
+                logger.warning("⚠️ No valid token for statistics request")
+                return None
+
+            headers = await self.oauth2_service.get_headers()
+            
+            import httpx
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(
+                    f"{self.base_url}/gms/application/gateways/{gateway_id}/statistics",
+                    headers=headers
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.warning(f"⚠️ Statistics request failed: {response.status_code}")
+                    return None
+
+        except Exception as e:
+            logger.error(f"❌ Statistics error: {e}")
+            return None
+
+    async def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """Get current user information"""
+        return await self.oauth2_service.get_user_info()
+
+    # =============================================================================
+    # Utility Methods
+    # =============================================================================
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Comprehensive service health check"""
+        connection_status = await self.get_connection_status()
+        
+        return {
+            "service": "wmc-gateway-scanner",
+            "version": "1.0.3",
+            "status": "WMC Gateway Scanner healthy ✅",
+            "wmc_api_status": "connected" if connection_status["connected"] else "disconnected",
+            "authentication": {
+                "method": "oauth2",
+                "authenticated": connection_status["authenticated"],
+                "token_valid": connection_status["token_valid"],
+                "expires_at": connection_status["expires_at"]
+            },
+            "features": [
+                "qr_code_scanning",
+                "wmc_api_integration", 
+                "mobile_responsive_ui",
+                "real_time_gateway_status",
+                "oauth2_authentication"
+            ],
+            "templates_available": True
+        }
+
+    def __del__(self):
+        """Cleanup when service is destroyed"""
+        try:
+            asyncio.create_task(self.close())
+        except:
+            pass

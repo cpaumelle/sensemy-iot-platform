@@ -1,0 +1,50 @@
+# WMC Gateway QR Scanner Service Definition
+# Version: 1.0.0
+# Created: 2025-08-20 16:45:00 UTC
+# 
+# Copy this service definition into your main docker-compose.yml
+
+services:
+  wmc-gateway-scanner:
+    container_name: wmc-gateway-scanner
+    restart: unless-stopped
+    build: 
+      context: ./05-wmc-gateway-scanner
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "7300:7300"
+    volumes:
+      # Development volume mounts for hot reload
+      - ./05-wmc-gateway-scanner/app:/app/app:ro
+      - ./05-wmc-gateway-scanner/static:/app/static:ro
+      - ./05-wmc-gateway-scanner/templates:/app/templates:ro
+    networks:
+      - sensemy_network
+      - charliehub_net
+    environment:
+      # WMC API Configuration
+      - WMC_BASE_URL=${WMC_BASE_URL:-https://wmc.wanesy.com}
+      - WMC_USERNAME=${WMC_USERNAME}
+      - WMC_PASSWORD=${WMC_PASSWORD}
+      
+      # Service Configuration
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=info
+      
+      # CORS Configuration
+      - CORS_ORIGINS=${WMC_SCANNER_CORS_ORIGINS:-*}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7300/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      # Add dependencies if needed
+      # - other-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wmc-scanner.rule=Host(`gateway-scanner.sensemy.cloud`)"
+      - "traefik.http.services.wmc-scanner.loadbalancer.server.port=7300"

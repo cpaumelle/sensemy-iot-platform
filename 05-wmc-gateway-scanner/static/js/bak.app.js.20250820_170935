@@ -1,0 +1,648 @@
+/**
+ * WMC Gateway Scanner - Enhanced Frontend with OAuth2
+ * Version: 2.0.0
+ * Updated: 2025-08-20 16:55:00 UTC
+ * 
+ * Features:
+ * - OAuth2 authentication flow
+ * - QR code scanning
+ * - Mobile-responsive design
+ * - Real-time status updates
+ */
+
+class WMCGatewayScanner {
+    constructor() {
+        this.scanner = null;
+        this.isScanning = false;
+        this.authStatus = {
+            authenticated: false,
+            token_valid: false,
+            expires_at: null
+        };
+        
+        // OAuth2 flow state
+        this.oauth2State = {
+            state: null,
+            code_verifier: null,
+            authorization_url: null
+        };
+        
+        this.init();
+    }
+
+    async init() {
+        console.log('🚀 Initializing WMC Gateway Scanner v2.0.0');
+        
+        // Check for OAuth2 callback parameters
+        this.handleOAuth2Callback();
+        
+        // Setup event listeners
+        this.setupEventListeners();
+        
+        // Check authentication status
+        await this.checkAuthStatus();
+        
+        // Initialize status checks
+        this.startStatusChecks();
+        
+        console.log('✅ WMC Gateway Scanner initialized');
+    }
+
+    setupEventListeners() {
+        // QR Scanner controls
+        document.getElementById('start-scan-btn')?.addEventListener('click', () => this.startScanning());
+        document.getElementById('stop-scan-btn')?.addEventListener('click', () => this.stopScanning());
+        
+        // Manual EUI input
+        document.getElementById('lookup-btn')?.addEventListener('click', () => this.lookupGateway());
+        document.getElementById('manual-eui')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this.lookupGateway();
+            }
+        });
+        
+        // Auth controls (we'll add these to the UI)
+        this.createAuthControls();
+        
+        // Error handling
+        document.getElementById('clear-error-btn')?.addEventListener('click', () => this.clearError());
+        
+        // OAuth2 message listener for popup callback
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'oauth2_callback') {
+                this.handleOAuth2PopupCallback(event.data);
+            }
+        });
+    }
+
+    createAuthControls() {
+        // Add authentication status and controls to the header
+        const header = document.querySelector('.app-header');
+        if (header) {
+            const authSection = document.createElement('div');
+            authSection.className = 'auth-section';
+            authSection.innerHTML = `
+                <div class="auth-status" id="auth-status">
+                    <span class="auth-icon">🔒</span>
+                    <span class="auth-text" id="auth-status-text">Checking...</span>
+                </div>
+                <div class="auth-controls" id="auth-controls">
+                    <button id="login-btn" class="btn btn-auth" style="display: none;">
+                        🔑 Login to WMC
+                    </button>
+                    <button id="logout-btn" class="btn btn-auth" style="display: none;">
+                        🚪 Logout
+                    </button>
+                </div>
+            `;
+            header.appendChild(authSection);
+            
+            // Add event listeners for auth buttons
+            document.getElementById('login-btn')?.addEventListener('click', () => this.startOAuth2Login());
+            document.getElementById('logout-btn')?.addEventListener('click', () => this.logout());
+        }
+    }
+
+    async checkAuthStatus() {
+        try {
+            const response = await fetch('/auth-status');
+            const status = await response.json();
+            
+            this.authStatus = status;
+            this.updateAuthDisplay();
+            
+        } catch (error) {
+            console.error('❌ Auth status check failed:', error);
+            this.updateAuthDisplay(false);
+        }
+    }
+
+    updateAuthDisplay(authenticated = null) {
+        const authIcon = document.querySelector('.auth-icon');
+        const authText = document.getElementById('auth-status-text');
+        const loginBtn = document.getElementById('login-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        
+        const isAuth = authenticated !== null ? authenticated : this.authStatus.authenticated;
+        
+        if (authIcon && authText) {
+            if (isAuth) {
+                authIcon.textContent = '🔓';
+                authText.textContent = 'Authenticated';
+                authText.className = 'auth-text authenticated';
+            } else {
+                authIcon.textContent = '🔒';
+                authText.textContent = 'Not authenticated';
+                authText.className = 'auth-text not-authenticated';
+            }
+        }
+        
+        if (loginBtn && logoutBtn) {
+            if (isAuth) {
+                loginBtn.style.display = 'none';
+                logoutBtn.style.display = 'inline-block';
+            } else {
+                loginBtn.style.display = 'inline-block';
+                logoutBtn.style.display = 'none';
+            }
+        }
+    }
+
+    handleOAuth2Callback() {
+        // Check URL parameters for OAuth2 callback
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const state = urlParams.get('state');
+        
+        if (code && state) {
+            console.log('🔄 Processing OAuth2 callback...');
+            
+            // Get stored OAuth2 state from sessionStorage
+            const storedState = sessionStorage.getItem('oauth2_state');
+            const storedCodeVerifier = sessionStorage.getItem('oauth2_code_verifier');
+            
+            if (storedState === state && storedCodeVerifier) {
+                this.exchangeCodeForToken(code, storedCodeVerifier);
+            } else {
+                console.error('❌ OAuth2 state mismatch or missing code verifier');
+                this.showError('OAuth2 authentication failed: Invalid state');
+            }
+            
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }
+
+    handleOAuth2PopupCallback(data) {
+        console.log('🔄 Processing OAuth2 popup callback...');
+        
+        const storedCodeVerifier = sessionStorage.getItem('oauth2_code_verifier');
+        const storedState = sessionStorage.getItem('oauth2_state');
+        
+        if (data.state === storedState && storedCodeVerifier) {
+            this.exchangeCodeForToken(data.code, storedCodeVerifier);
+        } else {
+            console.error('❌ OAuth2 popup state mismatch');
+            this.showError('OAuth2 authentication failed: Invalid state');
+        }
+    }
+
+    async startOAuth2Login() {
+        try {
+            console.log('🔑 Starting OAuth2 login...');
+            this.showStatus('Initializing login...', 'info');
+            
+            // Get authorization URL
+            const response = await fetch('/api/v1/auth/login', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Login initiation failed: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Store OAuth2 state for callback verification
+            sessionStorage.setItem('oauth2_state', data.state);
+            sessionStorage.setItem('oauth2_code_verifier', data.code_verifier);
+            
+            // Open OAuth2 authorization page in popup
+            const popup = window.open(
+                data.authorization_url,
+                'oauth2_login',
+                'width=500,height=600,scrollbars=yes,resizable=yes'
+            );
+            
+            // Monitor popup
+            const checkClosed = setInterval(() => {
+                if (popup.closed) {
+                    clearInterval(checkClosed);
+                    console.log('🔄 OAuth2 popup closed');
+                }
+            }, 1000);
+            
+        } catch (error) {
+            console.error('❌ OAuth2 login error:', error);
+            this.showError(`Login failed: ${error.message}`);
+        }
+    }
+
+    async exchangeCodeForToken(code, codeVerifier) {
+        try {
+            console.log('🔄 Exchanging authorization code for token...');
+            this.showStatus('Completing authentication...', 'info');
+            
+            const response = await fetch('/api/v1/auth/exchange-token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    code: code,
+                    code_verifier: codeVerifier
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Token exchange failed: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                console.log('✅ OAuth2 authentication successful');
+                this.showStatus('Authentication successful!', 'success');
+                
+                // Update auth status
+                this.authStatus.authenticated = true;
+                this.authStatus.token_valid = true;
+                this.authStatus.expires_at = data.expires_at;
+                
+                this.updateAuthDisplay(true);
+                
+                // Clean up session storage
+                sessionStorage.removeItem('oauth2_state');
+                sessionStorage.removeItem('oauth2_code_verifier');
+                
+                // Hide status after delay
+                setTimeout(() => this.hideStatus(), 3000);
+                
+            } else {
+                throw new Error('Token exchange returned failure');
+            }
+            
+        } catch (error) {
+            console.error('❌ Token exchange error:', error);
+            this.showError(`Authentication failed: ${error.message}`);
+        }
+    }
+
+    async logout() {
+        try {
+            console.log('🚪 Logging out...');
+            
+            const response = await fetch('/api/v1/auth/logout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                console.log('✅ Logout successful');
+                this.authStatus.authenticated = false;
+                this.authStatus.token_valid = false;
+                this.updateAuthDisplay(false);
+                this.showStatus('Logged out successfully', 'info');
+                setTimeout(() => this.hideStatus(), 2000);
+            } else {
+                throw new Error(`Logout failed: ${response.status}`);
+            }
+            
+        } catch (error) {
+            console.error('❌ Logout error:', error);
+            this.showError(`Logout failed: ${error.message}`);
+        }
+    }
+
+    async startScanning() {
+        if (!this.authStatus.authenticated) {
+            this.showError('Please authenticate with WMC first');
+            return;
+        }
+        
+        if (this.isScanning) return;
+        
+        try {
+            console.log('📷 Starting QR code scanner...');
+            
+            const qrReader = document.getElementById('qr-reader');
+            if (!qrReader) {
+                throw new Error('QR reader element not found');
+            }
+            
+            this.scanner = new Html5Qrcode("qr-reader");
+            
+            const config = {
+                fps: 10,
+                qrbox: { width: 250, height: 250 },
+                aspectRatio: 1.0
+            };
+            
+            await this.scanner.start(
+                { facingMode: "environment" },
+                config,
+                (decodedText, decodedResult) => {
+                    console.log('🎯 QR Code detected:', decodedText);
+                    this.handleQRCodeResult(decodedText);
+                },
+                (errorMessage) => {
+                    // Handle scan errors silently
+                }
+            );
+            
+            this.isScanning = true;
+            this.updateScannerControls();
+            this.updateCameraStatus('📷 Scanning...', 'success');
+            
+        } catch (error) {
+            console.error('❌ Scanner start error:', error);
+            this.showError(`Scanner error: ${error.message}`);
+            this.updateCameraStatus('📱 Scanner error', 'error');
+        }
+    }
+
+    async stopScanning() {
+        if (!this.isScanning || !this.scanner) return;
+        
+        try {
+            await this.scanner.stop();
+            this.scanner = null;
+            this.isScanning = false;
+            this.updateScannerControls();
+            this.updateCameraStatus('📱 Camera ready', 'ready');
+            console.log('⏹️ Scanner stopped');
+        } catch (error) {
+            console.error('❌ Scanner stop error:', error);
+        }
+    }
+
+    updateScannerControls() {
+        const startBtn = document.getElementById('start-scan-btn');
+        const stopBtn = document.getElementById('stop-scan-btn');
+        
+        if (startBtn && stopBtn) {
+            if (this.isScanning) {
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+            } else {
+                startBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
+            }
+        }
+    }
+
+    handleQRCodeResult(qrText) {
+        console.log('🔍 Processing QR code:', qrText);
+        
+        // Stop scanning
+        this.stopScanning();
+        
+        // Extract Gateway EUI from QR code
+        let gatewayEUI = this.extractGatewayEUI(qrText);
+        
+        if (gatewayEUI) {
+            this.lookupGateway(gatewayEUI);
+        } else {
+            this.showError('Could not extract Gateway EUI from QR code');
+        }
+    }
+
+    extractGatewayEUI(qrText) {
+        // Try different patterns to extract Gateway EUI
+        const patterns = [
+            /([A-Fa-f0-9]{16})/,           // 16-character hex
+            /([A-Fa-f0-9-:]{19,23})/,     // With separators
+            /EUI[:\s]*([A-Fa-f0-9-:]+)/i, // "EUI: ..." format
+            /ID[:\s]*([A-Fa-f0-9-:]+)/i   // "ID: ..." format
+        ];
+        
+        for (const pattern of patterns) {
+            const match = qrText.match(pattern);
+            if (match) {
+                return match[1].replace(/[-:]/g, '').toUpperCase();
+            }
+        }
+        
+        // If no pattern matches, assume the entire text is the EUI
+        const cleaned = qrText.replace(/[-:\s]/g, '').toUpperCase();
+        if (/^[A-F0-9]{8,16}$/.test(cleaned)) {
+            return cleaned;
+        }
+        
+        return null;
+    }
+
+    async lookupGateway(gatewayEUI = null) {
+        if (!this.authStatus.authenticated) {
+            this.showError('Please authenticate with WMC first');
+            return;
+        }
+        
+        const eui = gatewayEUI || document.getElementById('manual-eui')?.value?.trim();
+        
+        if (!eui) {
+            this.showError('Please enter a Gateway EUI');
+            return;
+        }
+        
+        try {
+            console.log('🔍 Looking up gateway:', eui);
+            this.showStatus('Looking up gateway...', 'info');
+            
+            const response = await fetch(`/api/v1/gateways/lookup/${encodeURIComponent(eui)}?include_stats=true`);
+            
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                throw new Error(error.detail || `HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            console.log('✅ Gateway lookup successful:', data);
+            this.displayGatewayInfo(data);
+            this.hideStatus();
+            
+        } catch (error) {
+            console.error('❌ Gateway lookup error:', error);
+            this.showError(`Gateway lookup failed: ${error.message}`);
+        }
+    }
+
+    displayGatewayInfo(data) {
+        const resultsSection = document.getElementById('results-section');
+        const gatewayInfo = document.getElementById('gateway-info');
+        
+        if (!resultsSection || !gatewayInfo) return;
+        
+        const gateway = data.gateway;
+        
+        const html = `
+            <div class="gateway-card">
+                <div class="gateway-header">
+                    <h3>${gateway.name || 'Unnamed Gateway'}</h3>
+                    <span class="gateway-status ${gateway.status || 'unknown'}">${gateway.status || 'Unknown'}</span>
+                </div>
+                
+                <div class="gateway-details">
+                    <div class="detail-row">
+                        <span class="label">EUI:</span>
+                        <span class="value">${gateway.eui || data.clean_eui}</span>
+                    </div>
+                    
+                    ${gateway.location ? `
+                    <div class="detail-row">
+                        <span class="label">Location:</span>
+                        <span class="value">${gateway.location}</span>
+                    </div>
+                    ` : ''}
+                    
+                    ${gateway.model ? `
+                    <div class="detail-row">
+                        <span class="label">Model:</span>
+                        <span class="value">${gateway.model}</span>
+                    </div>
+                    ` : ''}
+                    
+                    ${gateway.lastSeen ? `
+                    <div class="detail-row">
+                        <span class="label">Last Seen:</span>
+                        <span class="value">${new Date(gateway.lastSeen).toLocaleString()}</span>
+                    </div>
+                    ` : ''}
+                    
+                    ${gateway.statistics ? `
+                    <div class="detail-row">
+                        <span class="label">Statistics:</span>
+                        <span class="value">Available</span>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                <div class="gateway-actions">
+                    <button class="btn btn-secondary" onclick="gatewayScanner.clearResults()">
+                        🔄 New Search
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        gatewayInfo.innerHTML = html;
+        resultsSection.style.display = 'block';
+        
+        // Scroll to results
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    clearResults() {
+        const resultsSection = document.getElementById('results-section');
+        if (resultsSection) {
+            resultsSection.style.display = 'none';
+        }
+        
+        // Clear manual input
+        const manualInput = document.getElementById('manual-eui');
+        if (manualInput) {
+            manualInput.value = '';
+        }
+    }
+
+    showStatus(message, type = 'info') {
+        // Create or update status display
+        let statusDiv = document.getElementById('app-status');
+        if (!statusDiv) {
+            statusDiv = document.createElement('div');
+            statusDiv.id = 'app-status';
+            statusDiv.className = 'app-status';
+            document.body.appendChild(statusDiv);
+        }
+        
+        statusDiv.textContent = message;
+        statusDiv.className = `app-status ${type}`;
+        statusDiv.style.display = 'block';
+    }
+
+    hideStatus() {
+        const statusDiv = document.getElementById('app-status');
+        if (statusDiv) {
+            statusDiv.style.display = 'none';
+        }
+    }
+
+    showError(message) {
+        console.error('❌ Error:', message);
+        
+        const errorSection = document.getElementById('error-section');
+        const errorMessage = document.getElementById('error-message');
+        
+        if (errorSection && errorMessage) {
+            errorMessage.textContent = message;
+            errorSection.style.display = 'block';
+            errorSection.scrollIntoView({ behavior: 'smooth' });
+        } else {
+            alert(`Error: ${message}`);
+        }
+    }
+
+    clearError() {
+        const errorSection = document.getElementById('error-section');
+        if (errorSection) {
+            errorSection.style.display = 'none';
+        }
+    }
+
+    updateCameraStatus(text, status) {
+        const cameraStatus = document.getElementById('camera-status');
+        if (cameraStatus) {
+            const statusText = cameraStatus.querySelector('.status-text');
+            const statusIcon = cameraStatus.querySelector('.status-icon');
+            
+            if (statusText) statusText.textContent = text;
+            
+            // Update status class
+            cameraStatus.className = `status-item ${status}`;
+        }
+    }
+
+    updateWMCStatus(text, status) {
+        const wmcStatus = document.getElementById('wmc-status');
+        if (wmcStatus) {
+            const statusText = wmcStatus.querySelector('.status-text');
+            
+            if (statusText) statusText.textContent = text;
+            
+            // Update status class
+            wmcStatus.className = `status-item ${status}`;
+        }
+    }
+
+    startStatusChecks() {
+        // Check auth status every 30 seconds
+        setInterval(async () => {
+            await this.checkAuthStatus();
+        }, 30000);
+        
+        // Initial WMC status check
+        this.checkWMCStatus();
+        
+        // Check WMC status every 60 seconds
+        setInterval(() => {
+            this.checkWMCStatus();
+        }, 60000);
+    }
+
+    async checkWMCStatus() {
+        try {
+            const response = await fetch('/health');
+            const data = await response.json();
+            
+            if (data.wmc_api_status === 'connected') {
+                this.updateWMCStatus('🟢 WMC Connected', 'success');
+            } else {
+                this.updateWMCStatus('🔴 WMC Disconnected', 'error');
+            }
+            
+        } catch (error) {
+            this.updateWMCStatus('🔴 WMC Error', 'error');
+        }
+    }
+}
+
+// Initialize the scanner when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.gatewayScanner = new WMCGatewayScanner();
+});
